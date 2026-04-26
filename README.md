@@ -19,6 +19,14 @@ OpenClaw/ArkClaw 会加载 `<workspace>/skills` 和 `~/.openclaw/skills` 中的�
 - [openclaw skills 命令](https://openclaw.cc/cli/skills)
 - [ArkClaw 介绍](https://arkclaw.lol/)
 
+### 一键安装
+
+```bash
+bash <(curl -fsSL https://gitee.com/bolecodex/seedance-prompt-optimizer/raw/main/scripts/setup-gitee.sh)
+```
+
+该命令会安装技能到 `~/.openclaw/skills/seedance-prompt-optimizer`，并安装 CLI 到 `~/.local/bin/seedance-prompt-optimizer`。
+
 ### 方式一：作为工作区仓库安装
 
 ```bash
