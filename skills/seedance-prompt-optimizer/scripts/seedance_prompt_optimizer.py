@@ -404,22 +404,33 @@ def build_optimized_prompt(analysis: Analysis, args: argparse.Namespace) -> str:
             for media_id in analysis.media[kind]:
                 media_lines.append(compact_reference_declaration(reference_descriptions[(kind, media_id)]))
 
-    global_parts: list[str] = []
+    setting_parts: list[str] = []
     if args.duration:
         duration = normalize_seconds(str(args.duration))
         if not duration.endswith("秒") and re.fullmatch(r"\d+(?:\.\d+)?", duration):
             duration = f"{duration}秒"
-        global_parts.append(f"时长：{duration}")
-    else:
-        global_parts.append("每个镜头不超过2~3秒")
+        setting_parts.append(f"总时长约{duration}")
     if args.ratio:
-        global_parts.append(f"比例：{args.ratio}")
-    global_parts.append("请补充具体视觉风格、场景、光影和色调")
-    global_parts.extend(trim_period(constraint) for constraint in constraints)
-
-    lines: list[str] = [f"【全局设定】{'，'.join(global_parts)}。"]
+        setting_parts.append(f"画面比例{args.ratio}")
+    setting_parts.append("请补充明确的故事场景、主体外观、空间环境、光影色调和情绪氛围")
     if media_lines:
-        lines.append(f"{'，'.join(media_lines)}。")
+        setting_parts.append("参考素材：" + "，".join(media_lines))
+
+    style_parts = [
+        "请补充具体视觉风格、画面质感和镜头节奏",
+        "动作流畅无穿模",
+        "主体清晰稳定",
+    ]
+    if args.duration:
+        style_parts.append(f"按总时长{duration}自然分配镜头节奏")
+    else:
+        style_parts.append("每个镜头不超过2~3秒")
+    style_parts.extend(trim_period(constraint) for constraint in constraints)
+
+    lines: list[str] = [
+        f"整体设定：{ensure_sentence('，'.join(setting_parts))}",
+        "时间片分镜：",
+    ]
 
     for index, shot in enumerate(shots, start=1):
         clean_shot = normalize_media_refs(shot)
@@ -430,6 +441,7 @@ def build_optimized_prompt(analysis: Analysis, args: argparse.Namespace) -> str:
         clean_shot = re.sub(r"比例\s*[:：]\s*[^，。；;\n]+[，。；;]?\s*", "", clean_shot)
         clean_shot = cleanup_text(re.sub(r"\s+", " ", clean_shot))
         lines.append(f"镜头{index}: {ensure_sentence(clean_shot)}")
+    lines.append(f"风格画质约束：{ensure_sentence('，'.join(style_parts))}")
     return "\n".join(lines).strip() + "\n"
 
 
