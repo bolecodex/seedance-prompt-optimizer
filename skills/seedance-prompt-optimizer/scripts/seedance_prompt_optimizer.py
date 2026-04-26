@@ -398,6 +398,14 @@ def build_optimized_prompt(analysis: Analysis, args: argparse.Namespace) -> str:
     }
     subject_bindings = image_subject_bindings(reference_descriptions)
 
+    media_lines: list[str] = []
+    if has_any_media(analysis.media):
+        for kind in ("image", "video", "audio"):
+            for media_id in analysis.media[kind]:
+                media_lines.append(reference_descriptions[(kind, media_id)])
+    else:
+        media_lines.append("无参考素材；如使用图片、视频或音频，请补充 `图片1是...`、`视频1是...`、`音频1是...` 的职责说明。")
+
     lines: list[str] = ["【全局设定】", f"- 任务类型：{task_display(analysis.task_type)}"]
     if args.duration:
         duration = normalize_seconds(str(args.duration))
@@ -406,17 +414,9 @@ def build_optimized_prompt(analysis: Analysis, args: argparse.Namespace) -> str:
         lines.append(f"- 时长：{duration}")
     if args.ratio:
         lines.append(f"- 比例：{args.ratio}")
-    lines.append("- 风格/场景/光影：沿用原始提示词中的明确描述；将空泛形容词替换为具体光线、色调、构图和环境细节。")
-    lines.append("- 动态顺序：按镜头顺序描述镜头运动、主体动作、空间变化和音频信息。")
-    lines.append("")
-
-    lines.append("【参考素材说明】")
-    if has_any_media(analysis.media):
-        for kind in ("image", "video", "audio"):
-            for media_id in analysis.media[kind]:
-                lines.append(f"- {reference_descriptions[(kind, media_id)]}")
-    else:
-        lines.append("- 无参考素材；如使用图片、视频或音频，请补充 `图片1是...`、`视频1是...`、`音频1是...` 的职责说明。")
+    lines.append("- 风格：沿用原始提示词中的明确描述；将空泛形容词替换为具体视觉风格、光线、色调、构图和环境细节。")
+    lines.append(f"- 多模态参考：{'；'.join(media_lines)}")
+    lines.append("- 分镜原则：按镜头顺序描述镜头运动、主体动作、空间变化和音频信息。")
     lines.append("")
 
     for index, shot in enumerate(shots, start=1):
@@ -428,10 +428,12 @@ def build_optimized_prompt(analysis: Analysis, args: argparse.Namespace) -> str:
         clean_shot = re.sub(r"比例\s*[:：]\s*[^，。；;\n]+[，。；;]?\s*", "", clean_shot)
         clean_shot = cleanup_text(re.sub(r"\s+", " ", clean_shot))
         lines.append(f"【镜头{index}】")
-        lines.append("- 景别/机位/运镜：请补充一个明确景别、机位角度和单一运镜方式。")
+        lines.append("- 景别/机位/镜头：请补充一个明确景别、机位角度和单一运镜方式。")
         lines.append(f"- 主体/动作：{clean_shot}")
         lines.append("- 场景/光影：明确当前镜头的环境、光源、色调与空间关系；复杂站位优先绑定参考图。")
+        lines.append("- 风格/画质：沿用全局风格；如当前镜头有特殊风格需求，在此补充。")
         lines.append("- 配音/音效：将台词、旁白、环境音或音效写在当前镜头内；无音频需求则保持自然环境音。")
+        lines.append("- 约束：当前镜头主体清晰、动作自然、空间关系稳定。")
         lines.append("")
 
     lines.append("【全局约束】")
