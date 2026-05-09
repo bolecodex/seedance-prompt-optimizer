@@ -17,6 +17,7 @@ from typing import Iterable, Sequence
 
 TASKS = ("auto", "reference", "edit", "extend", "combo")
 OUTPUT_FORMATS = ("text", "markdown", "json")
+MEDIA_ANALYSIS_FORMATS = ("auto", "json", "markdown")
 
 VAGUE_WORDS = ("氛围感", "电影感", "好看点", "高级感", "大片感", "质感拉满")
 VAGUE_REPLACEMENTS = {
@@ -46,7 +47,43 @@ MEDIA_LABELS = {
     "video": "视频",
     "audio": "音频",
 }
+MEDIA_ANALYSIS_KEYS = {
+    "images": "image",
+    "image": "image",
+    "图片": "image",
+    "图": "image",
+    "videos": "video",
+    "video": "video",
+    "视频": "video",
+    "audios": "audio",
+    "audio": "audio",
+    "音频": "audio",
+}
+MARKDOWN_FIELD_KEYS = {
+    "职责": "role",
+    "摘要": "summary",
+    "主体": "subjects",
+    "场景": "scene",
+    "风格": "style",
+    "首帧": "start_frame",
+    "尾帧": "end_frame",
+    "运镜": "motion",
+    "动作": "actions",
+    "音色": "voice",
+    "情绪": "emotion",
+    "节奏": "rhythm",
+    "约束": "constraints",
+}
 CHINESE_NUMERALS = "一二三四五六七八九十"
+CAMERA_MOTION_PATTERNS = {
+    "推镜": re.compile(r"推镜|推进|向前推|镜头推近"),
+    "拉镜": re.compile(r"拉镜|拉远|向后拉|镜头拉开"),
+    "摇镜": re.compile(r"摇镜|摇移|左右摇|上下摇"),
+    "移镜": re.compile(r"横移|平移|向左移|向右移|跟移"),
+    "环绕": re.compile(r"环绕|绕行|绕拍"),
+    "固定": re.compile(r"固定机位|固定镜头|静止镜头"),
+}
+GRID_IMAGE_RE = re.compile(r"九宫格|宫格|拼图|长图|多视图|三视图|四视图|拼接图")
 
 
 @dataclass
@@ -57,12 +94,60 @@ class Diagnostic:
 
 
 @dataclass
+class MediaItem:
+    kind: str
+    media_id: int
+    role: str = ""
+    summary: str = ""
+    subjects: list[str] | None = None
+    scene: str = ""
+    style: str = ""
+    constraints: list[str] | None = None
+    start_frame: str = ""
+    end_frame: str = ""
+    motion: str = ""
+    actions: list[str] | None = None
+    timing: str = ""
+    audio: str = ""
+    voice: str = ""
+    emotion: str = ""
+    rhythm: str = ""
+
+
+@dataclass
+class MediaAnalysis:
+    items: dict[tuple[str, int], MediaItem]
+
+    def get(self, kind: str, media_id: int) -> MediaItem | None:
+        return self.items.get((kind, media_id))
+
+    def ids(self, kind: str) -> list[int]:
+        return sorted(media_id for item_kind, media_id in self.items if item_kind == kind)
+
+
+@dataclass
+class ContentAsset:
+    kind: str
+    media_id: int
+    source: str
+    role: str = ""
+
+
+@dataclass
+class ContentAssetMapping:
+    text: str
+    assets: list[ContentAsset]
+
+
+@dataclass
 class Analysis:
     task_type: str
     diagnostics: list[Diagnostic]
     media: dict[str, list[int]]
     applied_rules: list[str]
     normalized_prompt: str
+    media_analysis: MediaAnalysis
+    content_mapping: ContentAssetMapping | None = None
 
 
 def read_prompt(path: str | None) -> str:
@@ -79,6 +164,237 @@ def write_output(path: str | None, content: str) -> None:
         print(f"已写入 {path}")
     else:
         print(content)
+
+
+def read_media_analysis(path: str | None, fmt: str) -> MediaAnalysis:
+    if not path:
+        return MediaAnalysis({})
+    if path == "-":
+        content = sys.stdin.read()
+        source = ""
+    else:
+        source_path = Path(path)
+        content = source_path.read_text(encoding="utf-8")
+        source = source_path.suffix.lower()
+    return parse_media_analysis(content, fmt, source)
+
+
+def parse_media_analysis(content: str, fmt: str, source_suffix: str = "") -> MediaAnalysis:
+    content = content.strip()
+    if not content:
+        return MediaAnalysis({})
+    if fmt == "auto":
+        if source_suffix in {".md", ".markdown"}:
+            fmt = "markdown"
+        elif source_suffix == ".json" or content[0] in "[{":
+            fmt = "json"
+        else:
+            fmt = "markdown"
+    if fmt == "json":
+        return parse_json_media_analysis(content)
+    if fmt == "markdown":
+        return parse_markdown_media_analysis(content)
+    raise SystemExit(f"不支持的素材理解摘要格式：{fmt}")
+
+
+def parse_json_media_analysis(content: str) -> MediaAnalysis:
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"素材理解摘要 JSON 解析失败：{exc}") from exc
+
+    items: dict[tuple[str, int], MediaItem] = {}
+    if isinstance(payload, list):
+        containers = {"items": payload}
+    elif isinstance(payload, dict):
+        containers = payload
+    else:
+        raise SystemExit("素材理解摘要 JSON 顶层必须是对象或数组。")
+
+    for key, value in containers.items():
+        normalized_key = MEDIA_ANALYSIS_KEYS.get(str(key).strip(), "")
+        if normalized_key and isinstance(value, dict):
+            for media_id, raw_item in value.items():
+                item = media_item_from_mapping(normalized_key, media_id, raw_item)
+                items[(item.kind, item.media_id)] = item
+        elif str(key).strip() == "items" and isinstance(value, list):
+            for raw_item in value:
+                if not isinstance(raw_item, dict):
+                    continue
+                kind = normalize_media_kind(str(raw_item.get("kind") or raw_item.get("type") or raw_item.get("media_type") or ""))
+                media_id = raw_item.get("id") or raw_item.get("media_id") or raw_item.get("index")
+                if kind and media_id is not None:
+                    item = media_item_from_mapping(kind, media_id, raw_item)
+                    items[(item.kind, item.media_id)] = item
+    return MediaAnalysis(items)
+
+
+def parse_markdown_media_analysis(content: str) -> MediaAnalysis:
+    items: dict[tuple[str, int], MediaItem] = {}
+    header_re = re.compile(r"^#{1,4}\s*(图片|图|视频|音频)\s*([0-9]+)\s*$")
+    current_kind = ""
+    current_id = 0
+    current_fields: dict[str, object] = {}
+
+    def flush() -> None:
+        if current_kind and current_id:
+            item = media_item_from_mapping(current_kind, current_id, current_fields)
+            items[(item.kind, item.media_id)] = item
+
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        header = header_re.match(line)
+        if header:
+            flush()
+            current_kind = normalize_media_kind(header.group(1))
+            current_id = int(header.group(2))
+            current_fields = {}
+            continue
+        if not current_kind:
+            continue
+        line = re.sub(r"^[-*]\s*", "", line)
+        field = re.match(r"([^：:]+)[：:]\s*(.+)$", line)
+        if not field:
+            continue
+        raw_key = field.group(1).strip()
+        value = field.group(2).strip()
+        key = MARKDOWN_FIELD_KEYS.get(raw_key)
+        if key:
+            current_fields[key] = split_list_value(value) if key in {"subjects", "actions", "constraints"} else value
+    flush()
+    return MediaAnalysis(items)
+
+
+def normalize_media_kind(value: str) -> str:
+    return MEDIA_ANALYSIS_KEYS.get(value.strip(), "")
+
+
+def media_item_from_mapping(kind: str, media_id: object, raw_item: object) -> MediaItem:
+    try:
+        item_id = int(str(media_id))
+    except ValueError as exc:
+        raise SystemExit(f"素材编号必须是数字：{media_id}") from exc
+    mapping = raw_item if isinstance(raw_item, dict) else {}
+    return MediaItem(
+        kind=kind,
+        media_id=item_id,
+        role=string_value(mapping.get("role")),
+        summary=string_value(mapping.get("summary")),
+        subjects=list_value(mapping.get("subjects")),
+        scene=string_value(mapping.get("scene")),
+        style=string_value(mapping.get("style")),
+        constraints=list_value(mapping.get("constraints")),
+        start_frame=string_value(mapping.get("start_frame") or mapping.get("first_frame")),
+        end_frame=string_value(mapping.get("end_frame") or mapping.get("last_frame")),
+        motion=string_value(mapping.get("motion") or mapping.get("camera")),
+        actions=list_value(mapping.get("actions")),
+        timing=string_value(mapping.get("timing")),
+        audio=string_value(mapping.get("audio")),
+        voice=string_value(mapping.get("voice") or mapping.get("timbre")),
+        emotion=string_value(mapping.get("emotion")),
+        rhythm=string_value(mapping.get("rhythm")),
+    )
+
+
+def string_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return "，".join(string_value(item) for item in value if string_value(item))
+    return str(value).strip()
+
+
+def list_value(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [string_value(item) for item in value if string_value(item)]
+    return split_list_value(string_value(value))
+
+
+def split_list_value(value: str) -> list[str]:
+    return [part.strip() for part in re.split(r"[，,、/；;]\s*", value) if part.strip()]
+
+
+def extract_content_asset_mapping(prompt: str) -> ContentAssetMapping | None:
+    if '"content"' not in prompt and "'content'" not in prompt:
+        return None
+    try:
+        payload = json.loads(prompt)
+    except json.JSONDecodeError:
+        return None
+
+    content = payload.get("content") if isinstance(payload, dict) else None
+    if not isinstance(content, list):
+        return None
+
+    counters = {"image": 0, "video": 0, "audio": 0}
+    assets: list[ContentAsset] = []
+    text_parts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        item_type = string_value(item.get("type"))
+        if item_type == "text":
+            text_parts.append(string_value(item.get("text")))
+            continue
+        kind = kind_from_content_item(item)
+        source = source_from_content_item(item)
+        if not kind or not source:
+            continue
+        counters[kind] += 1
+        assets.append(ContentAsset(kind, counters[kind], source, string_value(item.get("role"))))
+
+    if not assets:
+        return None
+    text = "\n".join(part for part in text_parts if part).strip() or prompt
+    for asset in assets:
+        text = text.replace(asset.source, media_ref(asset.kind, asset.media_id))
+    return ContentAssetMapping(text=text, assets=assets)
+
+
+def kind_from_content_item(item: dict[str, object]) -> str:
+    item_type = string_value(item.get("type")).lower()
+    role = string_value(item.get("role")).lower()
+    if "image" in item_type or "image" in role or "reference_image" in role:
+        return "image"
+    if "video" in item_type or "video" in role or "reference_video" in role:
+        return "video"
+    if "audio" in item_type or "audio" in role or "reference_audio" in role:
+        return "audio"
+    for key in item:
+        lowered = str(key).lower()
+        if "image" in lowered:
+            return "image"
+        if "video" in lowered:
+            return "video"
+        if "audio" in lowered:
+            return "audio"
+    return ""
+
+
+def source_from_content_item(item: dict[str, object]) -> str:
+    for key in ("image_url", "video_url", "audio_url", "url"):
+        value = item.get(key)
+        if isinstance(value, dict):
+            source = string_value(value.get("url"))
+            if source:
+                return source
+        source = string_value(value)
+        if source:
+            return source
+    for value in item.values():
+        if isinstance(value, dict):
+            source = string_value(value.get("url"))
+            if source:
+                return source
+    return ""
+
+
+def media_ref(kind: str, media_id: int) -> str:
+    return f"{MEDIA_LABELS[kind]}{media_id}"
 
 
 def normalize_seconds(text: str) -> str:
@@ -135,8 +451,9 @@ def normalize_video_task_words(text: str, task_type: str) -> tuple[str, bool]:
     if task_type == "edit" and re.search(r"视频\s*[0-9]+", text) and not re.search(r"严格编辑\s*视频\s*[0-9]+", text):
         text = re.sub(r"(?<!严格编辑)(视频\s*[0-9]+)", r"严格编辑\1", text, count=1)
         changed = True
-    if task_type == "extend" and re.search(r"视频\s*[0-9]+", text) and not re.search(r"(?:延长|向前延长)\s*视频\s*[0-9]+", text):
-        text = re.sub(r"(?<!延长)(视频\s*[0-9]+)", r"延长\1", text, count=1)
+    if task_type == "extend" and re.search(r"视频\s*[0-9]+", text) and not re.search(r"(?:延长|向前延长|向后延长)\s*视频\s*[0-9]+", text):
+        prefix = "向前延长" if wants_prequel(text) else "延长"
+        text = re.sub(r"(?<!延长)(视频\s*[0-9]+)", rf"{prefix}\1", text, count=1)
         changed = True
     return text, changed
 
@@ -154,8 +471,8 @@ def detect_task(prompt: str, requested: str) -> str:
     if requested != "auto":
         return requested
     has_reference = bool(re.search(r"参考|提取|结合|按照|保持.*一致", prompt))
-    has_edit = bool(re.search(r"严格编辑|编辑|替换|修改|删除|清除|去除|增加", prompt))
-    has_extend = bool(re.search(r"向前延长|向后延长|延长|续写|生成.*(?:之前|之后)", prompt))
+    has_edit = bool(re.search(r"严格编辑|编辑|替换|修改|删除|清除|去除|增加|轨道补[齐全]|补(?:全)?(?:音频|声音|口型|音轨|视频轨)", prompt))
+    has_extend = bool(re.search(r"向前延长|向后延长|延长|续写|前序|生成.*(?:之前|之后)", prompt))
     if has_reference and has_edit:
         return "combo"
     if has_extend:
@@ -180,6 +497,22 @@ def collect_media(prompt: str, images: int, videos: int, audios: int) -> dict[st
     return media
 
 
+def merge_media_analysis_ids(media: dict[str, list[int]], media_analysis: MediaAnalysis) -> dict[str, list[int]]:
+    merged = {kind: set(ids) for kind, ids in media.items()}
+    for kind in ("image", "video", "audio"):
+        merged[kind].update(media_analysis.ids(kind))
+    return {kind: sorted(ids) for kind, ids in merged.items()}
+
+
+def merge_content_asset_ids(media: dict[str, list[int]], content_mapping: ContentAssetMapping | None) -> dict[str, list[int]]:
+    if not content_mapping:
+        return media
+    merged = {kind: set(ids) for kind, ids in media.items()}
+    for asset in content_mapping.assets:
+        merged[asset.kind].add(asset.media_id)
+    return {kind: sorted(ids) for kind, ids in merged.items()}
+
+
 def has_any_media(media: dict[str, list[int]]) -> bool:
     return any(media[kind] for kind in media)
 
@@ -200,20 +533,65 @@ def likely_multi_person(prompt: str, media: dict[str, list[int]]) -> bool:
     return bool(re.search(r"多人|两人|二人|三人|四人|一群|男.*女|女.*男|父.*女|母.*子", prompt))
 
 
+def wants_prequel(prompt: str) -> bool:
+    return bool(re.search(r"向前延长|前序|之前|前面|开头之前|生成.*之前", prompt))
+
+
+def wants_track_fill(prompt: str) -> bool:
+    return bool(re.search(r"轨道补[齐全]|补(?:全)?(?:音频|声音|口型|音轨|视频轨)|补齐.*(?:音频|声音|口型|音轨|视频轨)", prompt))
+
+
+def camera_motion_conflicts(text: str) -> list[str]:
+    return [name for name, pattern in CAMERA_MOTION_PATTERNS.items() if pattern.search(text)]
+
+
+def prompt_camera_motion_conflicts(prompt: str) -> list[str]:
+    conflicts: list[str] = []
+    for shot in split_into_shots(prompt):
+        if re.search(r"参考|素材|职责|作为", shot):
+            continue
+        motions = camera_motion_conflicts(shot)
+        if len(motions) > 1:
+            for motion in motions:
+                if motion not in conflicts:
+                    conflicts.append(motion)
+    return conflicts
+
+
+def has_long_grid_image_risk(prompt: str, media_analysis: MediaAnalysis) -> bool:
+    if GRID_IMAGE_RE.search(prompt):
+        return True
+    for item in media_analysis.items.values():
+        if item.kind == "image" and GRID_IMAGE_RE.search(dedupe_join([item.role, item.summary, item.scene, item.style])):
+            return True
+    return False
+
+
+def ambiguous_media_refs(prompt: str) -> list[str]:
+    refs = set(re.findall(r"@?(?:图片|图)\s*([0-9]+)(?=\s*(?:跑|走|站|坐|位于|看|拿|说|冲|跳|转|进入|离开))", prompt))
+    return [f"图片{media_id}" for media_id in sorted(refs, key=int)]
+
+
 def add_diag(diags: list[Diagnostic], code: str, severity: str, message: str) -> None:
     if not any(d.code == code and d.message == message for d in diags):
         diags.append(Diagnostic(code, severity, message))
 
 
-def analyze_prompt(prompt: str, args: argparse.Namespace) -> Analysis:
+def analyze_prompt(prompt: str, args: argparse.Namespace, media_analysis: MediaAnalysis) -> Analysis:
     diagnostics: list[Diagnostic] = []
     applied_rules: list[str] = []
-    task_type = detect_task(prompt, args.task)
-    media = collect_media(prompt, args.images, args.videos, args.audios)
+    content_mapping = extract_content_asset_mapping(prompt)
+    analysis_prompt = content_mapping.text if content_mapping else prompt
+    task_type = detect_task(analysis_prompt, args.task)
+    media = merge_content_asset_ids(merge_media_analysis_ids(collect_media(analysis_prompt, args.images, args.videos, args.audios), media_analysis), content_mapping)
 
-    normalized = normalize_seconds(prompt.strip())
-    if normalized != prompt.strip():
+    normalized = normalize_seconds(analysis_prompt.strip())
+    if normalized != analysis_prompt.strip():
         applied_rules.append("normalized_seconds")
+
+    if content_mapping:
+        add_diag(diagnostics, "CONTENT_ASSET_MAPPING_FOUND", "info", "已从 `content` JSON 中按素材出现顺序识别图片/视频/音频，并将 Asset ID 或 URL 映射为 `图片N/视频N/音频N`。")
+        applied_rules.append("mapped_content_assets")
 
     normalized, dash_changed = normalize_forbidden_dash_dash(normalized)
     if dash_changed:
@@ -234,53 +612,85 @@ def analyze_prompt(prompt: str, args: argparse.Namespace) -> Analysis:
         add_diag(diagnostics, "VIDEO_TASK_WORDING", "warning", "编辑/延长任务应使用 `视频N`、`严格编辑视频N` 或 `延长视频N`，不要写 `参考视频N`。")
         applied_rules.append("normalized_edit_extend_video_wording")
 
-    if not has_shots(prompt):
+    if not has_shots(analysis_prompt):
         add_diag(diagnostics, "MISSING_SHOT_STRUCTURE", "error", "提示词缺少清晰的 `镜头1/镜头2/...` 或场景顺序；Seedance 提示词应按时间顺序组织。")
-    elif not re.search(r"镜头\s*[0-9一二三四五六七八九十]+", prompt):
+    elif not re.search(r"镜头\s*[0-9一二三四五六七八九十]+", analysis_prompt):
         add_diag(diagnostics, "WEAK_SHOT_LABELS", "warning", "建议使用明确的 `镜头1/镜头2/...` 标签，不要只写松散场景描述。")
 
-    if len(re.split(r"\n\s*\n", prompt.strip())) <= 1 and len(prompt.strip()) > 180 and not has_shots(prompt):
+    if len(re.split(r"\n\s*\n", analysis_prompt.strip())) <= 1 and len(analysis_prompt.strip()) > 180 and not has_shots(analysis_prompt):
         add_diag(diagnostics, "UNSTRUCTURED_BLOB", "warning", "提示词是一整段长文本；建议拆成全局设定、参考素材、分镜和约束。")
 
     for word in VAGUE_WORDS:
-        if word in prompt:
+        if word in analysis_prompt:
             add_diag(diagnostics, f"VAGUE_WORD_{word}", "warning", f"`{word}` 表述过虚；请替换为具体光线、色调、构图、动作或风格细节。")
 
     if has_any_media(media):
-        if not re.search(r"(?:图片|图|视频|音频)\s*[0-9]+\s*(?:是|为|作为|：|:)", prompt):
+        has_media_role_declaration = bool(re.search(r"(?:图片|图|视频|音频)\s*[0-9]+\s*(?:是|为|作为|：|:)", analysis_prompt))
+        if not media_analysis.items and not content_mapping and not has_media_role_declaration:
+            add_diag(diagnostics, "MEDIA_ANALYSIS_NOT_PROVIDED", "info", "如已上传图片/视频/音频，可提供素材理解摘要；CLI 会用摘要生成更具体的素材职责、运镜、首尾帧和音色描述。")
+        if not media_analysis.items and not content_mapping and not has_media_role_declaration:
             add_diag(diagnostics, "MISSING_MEDIA_ROLE_DECLARATION", "error", "多模态提示词需要在开头声明素材职责，例如 `图片1是角色参考，视频1是运镜参考`。")
-        if has_shots(prompt) and not re.search(r"@[图片图视频音频]", prompt):
+        if has_shots(analysis_prompt) and not re.search(r"@[图片图视频音频]", analysis_prompt):
             add_diag(diagnostics, "MISSING_REPEATED_MEDIA_BINDING", "warning", "分镜中也要重复素材绑定，例如 `Nora@图片1`，不要只在开头声明一次。")
 
-    if re.search(r"asset-[a-zA-Z0-9_-]+", prompt) and not re.search(r"(?:图片|图|视频|音频)\s*[0-9]+\s*(?:是|为|对应)", prompt):
+    if re.search(r"asset-[a-zA-Z0-9_-]+", analysis_prompt) and not re.search(r"(?:图片|图|视频|音频)\s*[0-9]+\s*(?:是|为|对应)", analysis_prompt):
         add_diag(diagnostics, "ASSET_ID_NOT_BINDING", "error", "Asset ID 不能替代 `图片N/视频N/音频N`；请将每个上传素材显式映射到编号引用。")
 
-    if task_type in {"edit", "extend", "combo"} and re.search(r"参考\s*@?视频\s*[0-9]+", prompt):
+    if task_type in {"edit", "extend", "combo"} and re.search(r"参考\s*@?视频\s*[0-9]+", analysis_prompt):
         add_diag(diagnostics, "REFERENCE_VIDEO_IN_EDIT_EXTEND", "error", "编辑/延长任务不要写 `参考视频N`，请写 `严格编辑视频N` 或 `延长视频N`。")
 
-    if not likely_has_text_generation(prompt) and not re.search(r"无字幕|不要字幕|避免.*字幕|不生成字幕|不要.*文字", prompt):
+    motion_conflicts = prompt_camera_motion_conflicts(analysis_prompt)
+    if len(motion_conflicts) > 1:
+        add_diag(diagnostics, "CAMERA_MOTION_CONFLICT", "warning", "同一提示中出现多个可能冲突的运镜要求：" + "、".join(motion_conflicts) + "；建议每个镜头只保留一种主要运镜。")
+
+    if has_long_grid_image_risk(analysis_prompt, media_analysis):
+        add_diag(diagnostics, "LONG_GRID_IMAGE_RISK", "warning", "检测到长图/九宫格/多视图参考风险；建议拆分为单张参考图并逐一绑定到分镜。")
+
+    ambiguous_refs = ambiguous_media_refs(analysis_prompt)
+    if ambiguous_refs:
+        add_diag(diagnostics, "MEDIA_REFERENCE_AMBIGUITY", "warning", "素材引用后直接连接动作或方位，可能产生分词歧义；建议写成 `@图片N（角色名）` 或 `@图片N的主体`。涉及：" + "、".join(ambiguous_refs))
+
+    if len(media["image"]) >= 2 and not media_analysis.items and not re.search(r"左|右|前景|后景|首帧|尾帧|作为|是|为", analysis_prompt):
+        add_diag(diagnostics, "AMBIGUOUS_MEDIA_MAPPING", "warning", "存在多张图片但缺少人物/站位/首尾帧等映射说明；建议明确每张图的职责和画面位置。")
+
+    if not likely_has_text_generation(analysis_prompt) and not re.search(r"无字幕|不要字幕|避免.*字幕|不生成字幕|不要.*文字", analysis_prompt):
         add_diag(diagnostics, "MISSING_NO_SUBTITLE_CONSTRAINT", "warning", "如果不需要可见文字，请补充无字幕/无文字约束。")
 
-    if not re.search(r"不要.*(?:logo|Logo|水印)|避免.*(?:logo|Logo|水印)", prompt):
+    if not re.search(r"不要.*(?:logo|Logo|水印)|避免.*(?:logo|Logo|水印)", analysis_prompt):
         add_diag(diagnostics, "MISSING_NO_LOGO_WATERMARK", "info", "建议添加 `不要生成logo，不要生成水印`，降低意外平台标识出现概率。")
 
-    if has_any_media(media) and not re.search(r"2D|3D|动漫|国漫|日漫|真人|写实|实拍|CG|胶片|赛博朋克|水墨|手绘", prompt):
+    if has_any_media(media) and not re.search(r"2D|3D|动漫|国漫|日漫|真人|写实|实拍|CG|胶片|赛博朋克|水墨|手绘", analysis_prompt):
         add_diag(diagnostics, "STYLE_DRIFT_RISK", "warning", "使用视觉参考时，请明确目标风格，降低风格漂移风险。")
 
-    if media["image"] and likely_has_people(prompt) and not re.search(r"人脸|面部|脸部|面部特写|大头照|正脸", prompt):
+    if media["image"] and likely_has_people(analysis_prompt) and not re.search(r"人脸|面部|脸部|面部特写|大头照|正脸", analysis_prompt):
         add_diag(diagnostics, "ID_DRIFT_RISK", "warning", "为保证人物 ID 稳定，建议使用独立人脸特写参考，并声明其职责。")
 
-    if likely_multi_person(prompt, media) and not re.search(r"不要.*(?:同脸|复制|重复人物|双胞胎|分身)|禁止.*(?:同脸|复制|重复人物|双胞胎|分身)", prompt):
+    if likely_multi_person(analysis_prompt, media) and not re.search(r"不要.*(?:同脸|复制|重复人物|双胞胎|分身)|禁止.*(?:同脸|复制|重复人物|双胞胎|分身)", analysis_prompt):
         add_diag(diagnostics, "TWIN_CHARACTER_RISK", "warning", "多人提示词应明确禁止重复同脸人物和复制身体。")
 
-    if media["audio"] and not re.search(r"音色|男声|女声|低沉|温润|清亮|沙哑|颗粒感|语气|情绪", prompt):
+    for media_id in media["video"]:
+        item = media_analysis.get("video", media_id)
+        if item and (not item.motion or not (item.start_frame or item.end_frame)):
+            add_diag(diagnostics, "VIDEO_ANALYSIS_UNDERSPECIFIED", "warning", f"视频{media_id}的素材理解摘要缺少首尾帧或运镜信息；编辑/延长衔接稳定性会下降。")
+
+    for media_id in media["audio"]:
+        item = media_analysis.get("audio", media_id)
+        if item and not (item.voice or item.emotion or item.rhythm):
+            add_diag(diagnostics, "AUDIO_TIMBRE_UNDERSPECIFIED", "warning", f"音频{media_id}的素材理解摘要缺少音色、情绪或节奏描述；音色参考稳定性会下降。")
+
+    if media["audio"] and not re.search(r"音色|男声|女声|低沉|温润|清亮|沙哑|颗粒感|语气|情绪", analysis_prompt) and not any(media_analysis.get("audio", media_id) for media_id in media["audio"]):
         add_diag(diagnostics, "AUDIO_TIMBRE_UNDERSPECIFIED", "warning", "音频参考搭配文字音色和说话风格描述会更稳定。")
 
-    return Analysis(task_type, diagnostics, media, applied_rules, normalized)
+    return Analysis(task_type, diagnostics, media, applied_rules, normalized, media_analysis, content_mapping)
 
 
-def extract_media_description(prompt: str, kind: str, media_id: int) -> str:
+def extract_media_description(prompt: str, kind: str, media_id: int, media_analysis: MediaAnalysis) -> str:
     label = MEDIA_LABELS[kind]
+    item = media_analysis.get(kind, media_id)
+    if item:
+        description = media_analysis_description(item)
+        if description:
+            return f"{label}{media_id}：{description}"
     alias = rf"(?:{label}|{'图' if kind == 'image' else label})\s*{media_id}"
     direct = re.search(rf"@?{alias}\s*(?:是|为|作为|：|:)\s*([^，。；;\n]+)", prompt)
     if direct:
@@ -293,6 +703,67 @@ def extract_media_description(prompt: str, kind: str, media_id: int) -> str:
             clean = re.sub(r"^[@\s]*", "", clean)
             return clean.rstrip("。；;")
     return f"{label}{media_id}：请补充素材职责（角色/场景/道具/站位/运镜/音色等）"
+
+
+def content_asset_description(content_mapping: ContentAssetMapping | None, kind: str, media_id: int) -> str:
+    if not content_mapping:
+        return ""
+    for asset in content_mapping.assets:
+        if asset.kind == kind and asset.media_id == media_id:
+            label = MEDIA_LABELS[kind]
+            role = asset.role or {
+                "image": "参考图片",
+                "video": "参考视频",
+                "audio": "参考音频",
+            }[kind]
+            return f"{label}{media_id}：{role}（资产 ID: {asset.source}）"
+    return ""
+
+
+def media_analysis_description(item: MediaItem) -> str:
+    parts: list[str] = []
+    if item.role:
+        parts.append(item.role)
+    if item.summary:
+        parts.append(item.summary)
+    if item.kind == "image":
+        parts.extend(item.subjects or [])
+        if item.scene:
+            parts.append(item.scene)
+        if item.style:
+            parts.append(item.style)
+    elif item.kind == "video":
+        if item.motion:
+            parts.append(f"运镜：{item.motion}")
+        if item.start_frame:
+            parts.append(f"首帧：{item.start_frame}")
+        if item.end_frame:
+            parts.append(f"尾帧：{item.end_frame}")
+        if item.actions:
+            parts.append("动作：" + "、".join(item.actions))
+        if item.timing:
+            parts.append(f"节奏：{item.timing}")
+        if item.audio:
+            parts.append(f"音频：{item.audio}")
+    elif item.kind == "audio":
+        if item.voice:
+            parts.append(item.voice)
+        if item.emotion:
+            parts.append(f"情绪：{item.emotion}")
+        if item.rhythm:
+            parts.append(f"节奏：{item.rhythm}")
+    return dedupe_join(parts)
+
+
+def dedupe_join(parts: Iterable[str]) -> str:
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for part in parts:
+        clean = cleanup_text(str(part)).strip("，。；; ")
+        if clean and clean not in seen:
+            seen.add(clean)
+            cleaned.append(clean)
+    return "，".join(cleaned)
 
 
 def image_subject_bindings(reference_descriptions: dict[tuple[str, int], str]) -> dict[str, str]:
@@ -308,10 +779,49 @@ def image_subject_bindings(reference_descriptions: dict[tuple[str, int], str]) -
     return bindings
 
 
+def media_analysis_subject_bindings(media_analysis: MediaAnalysis) -> dict[str, str]:
+    bindings: dict[str, str] = {}
+    for (kind, media_id), item in media_analysis.items.items():
+        if kind != "image":
+            continue
+        for subject in item.subjects or []:
+            subject = subject.strip()
+            if subject:
+                bindings[subject] = f"图片{media_id}"
+    return bindings
+
+
 def apply_subject_bindings(text: str, bindings: dict[str, str]) -> str:
     for subject, media_label in sorted(bindings.items(), key=lambda item: len(item[0]), reverse=True):
         text = re.sub(rf"{re.escape(subject)}(?!@图片[0-9]+)", f"{subject}@{media_label}", text)
     return text
+
+
+def reference_labels(reference_descriptions: dict[tuple[str, int], str], media_analysis: MediaAnalysis) -> dict[tuple[str, int], str]:
+    labels: dict[tuple[str, int], str] = {}
+    for key, description in reference_descriptions.items():
+        kind, media_id = key
+        item = media_analysis.get(kind, media_id)
+        if item and item.subjects:
+            labels[key] = item.subjects[0]
+            continue
+        if kind == "image" and "：" in description:
+            candidate = description.split("：", 1)[1].split("，", 1)[0].strip()
+            candidate = re.sub(r"^(角色参考|场景参考|参考图片|图片|图)\s*", "", candidate).strip()
+            if candidate and len(candidate) <= 12 and not re.search(r"参考|场景|背景|风格|资产|请补充", candidate):
+                labels[key] = candidate
+    return labels
+
+
+def disambiguate_bare_media_refs(text: str, labels: dict[tuple[str, int], str]) -> str:
+    def replace(match: re.Match[str]) -> str:
+        kind = "image" if match.group(1) in {"图片", "图"} else "video"
+        media_id = int(match.group(2))
+        label = labels.get((kind, media_id), "主体" if kind == "image" else "素材")
+        return f"@{MEDIA_LABELS[kind]}{media_id}（{label}）"
+
+    text = re.sub(r"@?(图片|图|视频)\s*([0-9]+)(?![0-9]*[）\)])(?=\s*(?:跑|走|站|坐|位于|看|拿|说|冲|跳|转|进入|离开))", replace, text)
+    return re.sub(r"@?(图片|图|视频)\s*([0-9]+)(?![0-9]*[）\)])(?=\s*(?:[，。；,.!?！？]|$))", replace, text)
 
 
 def strip_reference_lines(prompt: str) -> str:
@@ -386,17 +896,68 @@ def build_global_constraints(prompt: str, media: dict[str, list[int]]) -> list[s
     return constraints
 
 
+def analysis_style_parts(media_analysis: MediaAnalysis) -> list[str]:
+    parts: list[str] = []
+    for item in media_analysis.items.values():
+        if item.style:
+            parts.append(f"目标视觉风格保持{item.style}")
+        parts.extend(item.constraints or [])
+    return parts
+
+
+def build_shot_context(analysis: Analysis, prompt: str) -> str:
+    media_analysis = analysis.media_analysis
+    parts: list[str] = []
+    if analysis.task_type == "extend":
+        for video_id in analysis.media["video"]:
+            item = media_analysis.get("video", video_id)
+            if wants_prequel(prompt):
+                parts.append(f"向前延长视频{video_id}，生成视频{video_id}之前自然发生的内容")
+                if item and item.start_frame:
+                    parts.append(f"衔接锚点为视频{video_id}首帧：{item.start_frame}")
+            else:
+                parts.append(f"延长视频{video_id}，生成视频{video_id}之后自然发生的内容")
+                if item and item.end_frame:
+                    parts.append(f"衔接锚点为视频{video_id}尾帧：{item.end_frame}")
+            if item and item.motion:
+                parts.append(f"保持视频{video_id}的运镜节奏：{item.motion}")
+    if analysis.task_type in {"edit", "combo"} and wants_track_fill(prompt):
+        for video_id in analysis.media["video"] or [1]:
+            parts.append(f"严格编辑视频{video_id}，只补齐目标音频/口型/轨道内容")
+            parts.append("保持原视频主体、动作、场景、构图、光影和时长不变")
+    for video_id in analysis.media["video"]:
+        item = media_analysis.get("video", video_id)
+        if item and analysis.task_type == "reference":
+            if item.motion:
+                parts.append(f"参考@视频{video_id}的运镜：{item.motion}")
+            if item.actions:
+                parts.append(f"参考@视频{video_id}的动作节奏：" + "、".join(item.actions))
+    for audio_id in analysis.media["audio"]:
+        item = media_analysis.get("audio", audio_id)
+        if item:
+            audio_parts = [item.voice, item.emotion, item.rhythm]
+            audio_text = dedupe_join(audio_parts)
+            if audio_text:
+                parts.append(f"使用@音频{audio_id}的音色和节奏：{audio_text}")
+    return dedupe_join(parts)
+
+
 def build_optimized_prompt(analysis: Analysis, args: argparse.Namespace) -> str:
     prompt = analysis.normalized_prompt
     prompt = normalize_media_refs(prompt)
     shots = split_into_shots(prompt)
     constraints = build_global_constraints(prompt, analysis.media)
     reference_descriptions = {
-        (kind, media_id): extract_media_description(prompt, kind, media_id)
+        (kind, media_id): (
+            content_asset_description(analysis.content_mapping, kind, media_id)
+            or extract_media_description(prompt, kind, media_id, analysis.media_analysis)
+        )
         for kind in ("image", "video", "audio")
         for media_id in analysis.media[kind]
     }
     subject_bindings = image_subject_bindings(reference_descriptions)
+    subject_bindings.update(media_analysis_subject_bindings(analysis.media_analysis))
+    ref_labels = reference_labels(reference_descriptions, analysis.media_analysis)
 
     media_lines: list[str] = []
     if has_any_media(analysis.media):
@@ -426,6 +987,7 @@ def build_optimized_prompt(analysis: Analysis, args: argparse.Namespace) -> str:
     else:
         style_parts.append("每个镜头不超过2~3秒")
     style_parts.extend(trim_period(constraint) for constraint in constraints)
+    style_parts.extend(trim_period(part) for part in analysis_style_parts(analysis.media_analysis))
 
     lines: list[str] = [
         f"整体设定：{ensure_sentence('，'.join(setting_parts))}",
@@ -437,6 +999,11 @@ def build_optimized_prompt(analysis: Analysis, args: argparse.Namespace) -> str:
         if analysis.task_type in {"edit", "extend", "combo"}:
             clean_shot = re.sub(r"@视频([0-9]+)", r"视频\1", clean_shot)
         clean_shot = apply_subject_bindings(clean_shot, subject_bindings)
+        clean_shot = disambiguate_bare_media_refs(clean_shot, ref_labels)
+        if index == 1:
+            shot_context = build_shot_context(analysis, prompt)
+            if shot_context:
+                clean_shot = f"{shot_context}。{clean_shot}"
         clean_shot = re.sub(r"时长\s*[:：]\s*[^，。；;\n]+[，。；;]?\s*", "", clean_shot)
         clean_shot = re.sub(r"比例\s*[:：]\s*[^，。；;\n]+[，。；;]?\s*", "", clean_shot)
         clean_shot = cleanup_text(re.sub(r"\s+", " ", clean_shot))
@@ -496,6 +1063,50 @@ def render_diagnostics(analysis: Analysis, fmt: str) -> str:
     return "\n".join(lines)
 
 
+def issue_for_diagnostic(diag: Diagnostic) -> str:
+    return f"{diag.code}: {diag.message}"
+
+
+PRINCIPLE_BY_CODE = {
+    "CONTENT_ASSET_MAPPING_FOUND": "Asset ID 屏蔽原则：Asset ID 或 URL 需要映射为 `图片N/视频N/音频N` 后再被 Seedance 使用。",
+    "ASSET_ID_NOT_BINDING": "Asset ID 屏蔽原则：不要让无语义 Asset ID 独立承担角色或素材指代。",
+    "MEDIA_REFERENCE_AMBIGUITY": "断句防歧义原则：`@图片N` 后紧跟角色名或名词解释，避免和动作/方位连读。",
+    "CAMERA_MOTION_CONFLICT": "单镜头单运镜原则：一个时间切片内只保留一种主要运镜，降低运动冲突。",
+    "LONG_GRID_IMAGE_RISK": "单图参考原则：长图、九宫格和多视图应拆成单图后逐一绑定到分镜。",
+    "AMBIGUOUS_MEDIA_MAPPING": "素材映射原则：多图场景必须明确人物、站位、首帧/尾帧或素材职责。",
+    "MISSING_SHOT_STRUCTURE": "时间片分镜原则：按镜头顺序描述主体、动作、场景、光影和音频。",
+    "MISSING_MEDIA_ROLE_DECLARATION": "多模态绑定原则：开头声明素材职责，并在分镜里重复绑定。",
+    "MISSING_REPEATED_MEDIA_BINDING": "重复绑定原则：分镜中继续使用 `人物@图片N`、`@视频N`、`@音频N`。",
+    "REFERENCE_VIDEO_IN_EDIT_EXTEND": "任务措辞原则：编辑/延长任务直接编辑或延长 `视频N`，不要写 `参考视频N`。",
+    "VIDEO_TASK_WORDING": "任务措辞原则：参考、编辑、延长要用不同动词，避免模型误判任务。",
+    "STYLE_DRIFT_RISK": "风格锁定原则：多模态参考时明确目标视觉风格，降低风格漂移。",
+    "AUDIO_TIMBRE_UNDERSPECIFIED": "音色稳定原则：音频参考要补充音色、情绪和台词风格。",
+}
+
+
+def render_issues(analysis: Analysis) -> list[str]:
+    return [issue_for_diagnostic(diag) for diag in analysis.diagnostics]
+
+
+def render_principles(analysis: Analysis) -> list[str]:
+    principles: list[str] = []
+    seen: set[str] = set()
+    for diag in analysis.diagnostics:
+        principle = PRINCIPLE_BY_CODE.get(diag.code)
+        if principle and principle not in seen:
+            seen.add(principle)
+            principles.append(principle)
+    if not principles:
+        principles.append("三段论结构原则：用整体设定、时间片分镜、风格画质约束组织 Seedance 提示词。")
+    return principles
+
+
+def render_bullets(title: str, items: list[str]) -> str:
+    lines = [title]
+    lines.extend(f"- {item}" for item in items)
+    return "\n".join(lines)
+
+
 def render_optimization(optimized_prompt: str, analysis: Analysis, fmt: str) -> str:
     if fmt == "json":
         return json.dumps(
@@ -504,13 +1115,17 @@ def render_optimization(optimized_prompt: str, analysis: Analysis, fmt: str) -> 
                 "diagnostics": [asdict(d) for d in analysis.diagnostics],
                 "task_type": analysis.task_type,
                 "applied_rules": analysis.applied_rules,
+                "issues": render_issues(analysis),
+                "principles": render_principles(analysis),
             },
             ensure_ascii=False,
             indent=2,
         )
     if fmt == "markdown":
         diagnostics = render_diagnostics(analysis, "markdown")
-        return f"## 优化后提示词\n\n{optimized_prompt}\n## 诊断\n\n{diagnostics}\n"
+        issues = render_bullets("## 优化问题", render_issues(analysis))
+        principles = render_bullets("## 相关原则", render_principles(analysis))
+        return f"## 优化后提示词\n\n{optimized_prompt}\n## 诊断\n\n{diagnostics}\n\n{issues}\n\n{principles}\n"
     return optimized_prompt
 
 
@@ -553,6 +1168,8 @@ def add_common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--images", type=int, default=0, help="上传参考图片数量。")
     parser.add_argument("--videos", type=int, default=0, help="上传参考视频数量。")
     parser.add_argument("--audios", type=int, default=0, help="上传参考音频数量。")
+    parser.add_argument("--media-analysis", help="素材理解摘要文件，支持 JSON/Markdown；传 '-' 时从标准输入读取。")
+    parser.add_argument("--media-analysis-format", choices=MEDIA_ANALYSIS_FORMATS, default="auto", help="素材理解摘要格式。")
     parser.add_argument("--format", choices=OUTPUT_FORMATS, default="text", help="输出格式。")
 
 
@@ -597,8 +1214,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         write_output(args.output, output)
         return 0
 
+    media_analysis = read_media_analysis(args.media_analysis, args.media_analysis_format)
     prompt = read_prompt(args.input)
-    analysis = analyze_prompt(prompt, args)
+    analysis = analyze_prompt(prompt, args, media_analysis)
 
     if args.command == "lint":
         print(render_diagnostics(analysis, args.format))
