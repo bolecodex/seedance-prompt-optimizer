@@ -8,7 +8,7 @@
 
 你不需要打开终端，也不需要记 CLI 参数。确认技能已安装后，直接在对话里发送需求即可。
 
-还没安装的用户，先看 [USER_GUIDE.md](USER_GUIDE.md) 里的“安装方式”。
+还没安装的用户，先看 [USER_GUIDE.md](USER_GUIDE.md) 里的“一句话安装”。
 
 ### 入口 1：火山 ArkClaw 企业版
 
