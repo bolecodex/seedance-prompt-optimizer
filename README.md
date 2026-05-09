@@ -67,7 +67,189 @@ openclaw skills info seedance-prompt-optimizer
 
 技能内 CLI 是自包含的；只复制 `skills/seedance-prompt-optimizer` 也能运行。
 
-## CLI 用法
+## 给小白用户：直接这样用
+
+安装好技能后，不需要打开终端，也不需要记 CLI 参数。直接在 ArkClaw/OpenClaw 新会话里，把你的需求发给助手即可。
+
+推荐开头写一句：
+
+```text
+请使用 seedance-prompt-optimizer 优化下面这段 Seedance 2.0 提示词：
+```
+
+然后粘贴你的原始想法、提示词，或上传图片/视频/音频素材。
+
+## 直接复制的使用示例
+
+### 1. 只有一个粗略想法
+
+你可以直接发：
+
+```text
+请使用 seedance-prompt-optimizer 帮我优化：
+我想生成一段江南雨巷里的视频，一个女孩撑伞走路，氛围感电影感，画面好看点，不要背景音乐。
+```
+
+适合：你只有一句大概想法，希望技能帮你补成可执行的 Seedance 提示词。
+
+如果信息太少，技能会先问你几个关键问题，比如角色长相、场景、风格、时长和比例。
+
+### 2. 已经写了一段提示词
+
+```text
+请使用 seedance-prompt-optimizer 优化这段 Seedance 提示词：
+氛围感电影感，一个女孩在江南雨巷里走路，镜头好看点，不要背景音乐。时长 6s，比例 9:16。
+```
+
+技能会返回：
+
+- 优化后的三段论提示词
+- 原提示词的问题
+- 使用到的优化原则
+- 如果需要，会提醒你补充哪些信息
+
+### 3. 上传图片做角色参考
+
+```text
+请使用 seedance-prompt-optimizer 优化：
+我上传了 1 张图片，图片1是女主角色参考。
+请生成 6 秒 9:16 视频：女主走在江南雨巷里，撑着油纸伞，轻声说：“今晚雨真大。”
+风格想要真人写实、冷青色雨夜光影，不要字幕，不要水印。
+```
+
+适合：你有角色图，希望锁定人物外观。
+
+### 4. 图片 + 视频 + 音频多参考
+
+```text
+请使用 seedance-prompt-optimizer 优化：
+我上传了 2 张图片、1 段视频、1 段音频。
+图片1是女主角色参考，图片2是江南雨巷场景参考。
+视频1只参考慢速推镜和横移运镜，不要复刻视频里的人物和场景。
+音频1参考温柔清亮青年女声的音色。
+
+请生成 6 秒 9:16 视频：女主走在图片2的雨巷里，参考视频1的运镜，使用音频1的音色说：“今晚雨真大。”
+不要字幕，不要 logo，不要水印，不要背景音乐。
+```
+
+适合：Seedance 全能参考、多参考生视频、角色图 + 场景图 + 运镜视频 + 音色参考。
+
+### 5. 严格编辑视频
+
+```text
+请使用 seedance-prompt-optimizer 优化：
+我上传了视频1，视频1是待编辑视频。
+请严格编辑视频1：把女主身上的蓝色外套改成红色外套。
+其余人物、动作、背景、构图、光线、镜头节奏都保持不变。
+```
+
+适合：局部替换、元素增删改、瑕疵修复。
+
+注意：编辑视频时，不要写“参考视频1”，要写“严格编辑视频1”。
+
+### 6. 视频向后延长
+
+```text
+请使用 seedance-prompt-optimizer 优化：
+我上传了视频1，视频1是上一段成片。
+请延长视频1，生成视频1之后自然发生的内容。
+女主继续沿雨巷向前走，保持角色外观、场景、光影、运镜和情绪连续。
+时长 6 秒。
+```
+
+适合：续写剧情、连续长镜头、文戏延长。
+
+### 7. 向前延长 / 前序生成
+
+```text
+请使用 seedance-prompt-optimizer 优化：
+我上传了视频1，视频1是当前片段。
+请向前延长视频1，生成视频1之前自然发生的内容。
+女主从巷口走入画面，最后自然衔接到视频1开头。
+时长 6 秒。
+```
+
+适合：想补一个“前面发生了什么”的镜头。
+
+### 8. 轨道补齐 / 补音频 / 补口型
+
+```text
+请使用 seedance-prompt-optimizer 优化：
+我上传了视频1。
+请给视频1补全音频轨道和口型。
+保持原视频主体、动作、场景、构图、光影和时长不变。
+```
+
+适合：补声音、补口型、补音轨、补目标轨道。
+
+### 9. 多人 / 多图场景
+
+```text
+请使用 seedance-prompt-optimizer 优化：
+我上传了 3 张图片。
+图片1是女主，图片2是男主，图片3是客厅场景。
+请生成 8 秒 16:9 视频：女主站在画面左侧，男主坐在画面右侧沙发上，两人发生争吵。
+女主看向男主说：“你到底还想瞒我多久？”
+要求真人写实，室内暖光，不要字幕，不要 logo，不要水印。
+```
+
+适合：多人对话、短剧、站位容易混乱的画面。
+
+### 10. 长图 / 九宫格参考
+
+```text
+请使用 seedance-prompt-optimizer 帮我检查：
+我有一张九宫格角色参考图，想直接作为图片1生成视频。这样写会不会有问题？
+```
+
+技能会提醒：九宫格、长图、多视图容易让模型混淆，建议拆成单张图片后分别绑定。
+
+## 使用小抄
+
+### 常用开头
+
+```text
+请使用 seedance-prompt-optimizer 优化：
+```
+
+```text
+请使用 seedance-prompt-optimizer 检查这段提示词有什么问题：
+```
+
+```text
+请使用 seedance-prompt-optimizer 把下面的想法改成 Seedance 2.0 可用提示词：
+```
+
+### 素材编号怎么写
+
+```text
+图片1是女主角色参考。
+图片2是场景参考。
+视频1只参考运镜和动作节奏。
+音频1参考音色和情绪。
+```
+
+### 不推荐的写法
+
+```text
+参考视频1进行编辑。
+asset-20260324135118-xxxx 是女主。
+@图片1跑向@图片2。
+一个镜头里同时推镜、横移、环绕。
+```
+
+### 推荐的写法
+
+```text
+严格编辑视频1，其余内容保持不变。
+图片1是女主角色参考。
+@图片1（女主）跑向 @图片2（男主）。
+镜头采用中景缓慢推镜。
+```
+
+## 高级用法：CLI
+
+普通用户优先使用 ArkClaw/OpenClaw 技能。CLI 适合批量处理、自动化检查、接入脚本或调试技能。
 
 仓库入口：
 
@@ -99,99 +281,14 @@ python skills/seedance-prompt-optimizer/scripts/seedance_prompt_optimizer.py tem
 --format text|markdown|json
 ```
 
-## 快速开始
-
-只想立刻优化一段提示词，可以直接把文本从标准输入传给 `optimize`：
+CLI 示例：
 
 ```bash
 printf '%s' '氛围感电影感，女孩在雨巷里走路，镜头好看点，不要背景音乐。' \
   | python tools/seedance_prompt_optimizer.py optimize --duration 6 --ratio 9:16 --format markdown
 ```
 
-如果已经有提示词文件：
-
-```bash
-python tools/seedance_prompt_optimizer.py optimize \
-  --input prompt.txt \
-  --output optimized.txt \
-  --duration 6 \
-  --ratio 9:16
-```
-
-只想检查问题，不改写：
-
-```bash
-python tools/seedance_prompt_optimizer.py lint --input prompt.txt --format markdown
-```
-
-生成一个可填写模板：
-
-```bash
-python tools/seedance_prompt_optimizer.py template --task reference --duration 6 --ratio 9:16
-```
-
-## 常见场景示例
-
-### 1. 纯文本提示词优化
-
-输入：
-
-```text
-氛围感电影感，一个女孩在江南雨巷里走路，镜头好看点，不要背景音乐。
-```
-
-命令：
-
-```bash
-printf '%s' '氛围感电影感，一个女孩在江南雨巷里走路，镜头好看点，不要背景音乐。' \
-  | python tools/seedance_prompt_optimizer.py optimize --duration 6 --ratio 9:16 --format markdown
-```
-
-适合：用户只有一个粗略想法，想先得到三段论结构化提示词。
-
-### 2. 图片 + 视频 + 音频多参考生成
-
-输入：
-
-```text
-图片1是女主，图片2是江南雨巷场景，视频1是慢速推镜参考，音频1是温柔女声音色参考。氛围感电影感，女主走在图片2的雨巷里，参考视频1的运镜，使用音频1说：今晚雨真大。
-```
-
-命令：
-
-```bash
-printf '%s' '图片1是女主，图片2是江南雨巷场景，视频1是慢速推镜参考，音频1是温柔女声音色参考。氛围感电影感，女主走在图片2的雨巷里，参考视频1的运镜，使用音频1说：今晚雨真大。' \
-  | python tools/seedance_prompt_optimizer.py optimize \
-      --task reference \
-      --images 2 \
-      --videos 1 \
-      --audios 1 \
-      --duration 6 \
-      --ratio 9:16 \
-      --format markdown
-```
-
-适合：Seedance 全能参考、多参考生视频、角色图 + 场景图 + 运镜视频 + 音色参考。
-
-### 3. 带素材理解摘要的多模态优化
-
-先让宿主多模态模型或人工写一个 `media.json`：
-
-```json
-{
-  "images": {
-    "1": {"role": "角色参考", "summary": "年轻女性，黑色长发，白色衬衫", "subjects": ["女主"], "style": "真人写实"}
-  },
-  "videos": {
-    "1": {"role": "运镜参考", "summary": "室外慢速推镜", "start_frame": "女主站在巷口", "end_frame": "女主走到油纸伞下", "motion": "中景缓慢推镜"}
-  },
-  "audios": {
-    "1": {"role": "音色参考", "summary": "温柔清亮青年女声", "voice": "青年女声，清亮", "emotion": "温柔克制", "rhythm": "平稳"}
-  }
-}
-```
-
-再运行：
+带素材理解摘要：
 
 ```bash
 python tools/seedance_prompt_optimizer.py optimize \
@@ -199,138 +296,6 @@ python tools/seedance_prompt_optimizer.py optimize \
   --media-analysis media.json \
   --task reference \
   --format markdown
-```
-
-适合：已经上传了真实图片/视频/音频，希望把素材内容更准确地写进提示词。
-
-Markdown 摘要也支持，保存为 `media.md` 即可：
-
-```markdown
-## 图片1
-职责：角色参考
-摘要：年轻女性，黑色长发
-主体：女主
-风格：真人写实
-
-## 视频1
-职责：待编辑视频
-摘要：室内对话场景
-首帧：女主站在门口
-尾帧：女主停在桌边
-运镜：中景平稳跟拍
-```
-
-```bash
-python tools/seedance_prompt_optimizer.py optimize \
-  --input prompt.txt \
-  --media-analysis media.md \
-  --format markdown
-```
-
-### 4. 严格编辑视频
-
-输入：
-
-```text
-视频1是待编辑视频。把视频1中女主的蓝色外套改成红色外套，其余人物、动作、背景和光线保持不变。
-```
-
-命令：
-
-```bash
-printf '%s' '视频1是待编辑视频。把视频1中女主的蓝色外套改成红色外套，其余人物、动作、背景和光线保持不变。' \
-  | python tools/seedance_prompt_optimizer.py optimize --task edit --videos 1 --format markdown
-```
-
-适合：局部替换、元素增删改、瑕疵修复。编辑任务里不要写 `参考视频1`，工具会提示并修正这类措辞风险。
-
-### 5. 视频向后延长
-
-输入：
-
-```text
-视频1是上一段成片。延长视频1，生成视频1之后自然发生的内容，女主继续沿雨巷向前走，保持角色、场景、光影和运镜连续。
-```
-
-命令：
-
-```bash
-printf '%s' '视频1是上一段成片。延长视频1，生成视频1之后自然发生的内容，女主继续沿雨巷向前走，保持角色、场景、光影和运镜连续。' \
-  | python tools/seedance_prompt_optimizer.py optimize --task extend --videos 1 --duration 6 --format markdown
-```
-
-适合：续写剧情、连续长镜头、文戏延长。
-
-### 6. 向前延长 / 前序生成
-
-输入：
-
-```text
-视频1是当前片段。生成视频1之前的内容，女主从巷口走入画面，最后自然衔接到视频1开头。
-```
-
-命令：
-
-```bash
-printf '%s' '视频1是当前片段。生成视频1之前的内容，女主从巷口走入画面，最后自然衔接到视频1开头。' \
-  | python tools/seedance_prompt_optimizer.py optimize --task extend --videos 1 --duration 6 --format markdown
-```
-
-如果 `media.json` 里有 `start_frame`，工具会把首帧作为衔接锚点写进分镜。
-
-### 7. 轨道补齐 / 补音频 / 补口型
-
-输入：
-
-```text
-给视频1补全音频轨道和口型，保持原视频主体、动作、场景、构图、光影和时长不变。
-```
-
-命令：
-
-```bash
-printf '%s' '给视频1补全音频轨道和口型，保持原视频主体、动作、场景、构图、光影和时长不变。' \
-  | python tools/seedance_prompt_optimizer.py optimize --videos 1 --format markdown
-```
-
-工具会自动把这类需求判定为 `edit`。
-
-### 8. Seedance API `content` JSON 自动映射
-
-如果你从接口日志里复制了完整 `content` JSON，可以直接传给 CLI：
-
-```bash
-python tools/seedance_prompt_optimizer.py optimize --format json <<'JSON'
-{
-  "content": [
-    {"type": "text", "text": "asset-img-001和asset-vid-001一起生成，镜头1：图片1走向镜头，参考视频1的动作。"},
-    {"type": "image_url", "image_url": {"url": "asset-img-001"}, "role": "reference_image"},
-    {"type": "video_url", "video_url": {"url": "asset-vid-001"}, "role": "reference_video"}
-  ]
-}
-JSON
-```
-
-工具会按非文本素材出现顺序映射：
-
-```text
-asset-img-001 -> 图片1
-asset-vid-001 -> 视频1
-```
-
-### 9. 官方规则诊断示例
-
-```text
-断句防歧义：把 @图片1跑向@图片2 改为 @图片1（女主）跑向@图片2（男主）。
-单镜头单运镜：不要在同一镜头同时写“推镜、横移、环绕”。
-长图/九宫格：拆分成单图后分别写 @图片1、@图片2、@图片3 的职责。
-```
-
-可以用 `lint` 快速检查：
-
-```bash
-printf '%s' '镜头1：@图片1跑向@图片2，镜头缓慢推镜并横移同时环绕。' \
-  | python tools/seedance_prompt_optimizer.py lint --images 2 --format markdown
 ```
 
 ## 验证
