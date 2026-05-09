@@ -1,75 +1,29 @@
 # Seedance Prompt Optimizer
 
-面向 Seedance 2.0 的提示词优化 CLI 与 ArkClaw/OpenClaw Skill。用户把自己写的提示词发给 ArkClaw，ArkClaw 触发 `seedance-prompt-optimizer` 技能后，返回结构化、可执行的优化提示词和简短诊断。
+面向 Seedance 2.0 的提示词优化技能。普通用户只需要在火山 ArkClaw 企业版的 Hermes Agent 或 Trae 里发送一句需求，技能会把粗糙想法改成结构化、可执行的 Seedance 提示词。
 
 规则优先级：以技能内 `skills/seedance-prompt-optimizer/references/seedance-rules.md` 为准；该文件已汇总 Seedance 2.0 常见问题、官方提示词指南和本工具的自动化规则。
 
-## 能力
+## 普通用户最快用法
 
-- 将松散提示词改写为三段论格式：`整体设定：`、`时间片分镜：`、`风格画质约束：`。
-- 检查缺少分镜、多模态素材未绑定、`参考视频N` 误用于编辑/延长、`--`、`s` 时长、空泛词、无效画质词、字幕/logo/水印、风格漂移、人物 ID 漂移、双胞胎问题和音色描述不足。
-- 支持 0-9 张图片、0-3 段视频、0-3 段音频的多参考生视频提示词检查与优化。
-- 支持读取 JSON/Markdown 素材理解摘要，将图片主体/场景/风格、视频首尾帧/运镜/动作、音频音色/情绪/节奏融入提示词。
-- 支持扫描 Seedance API 风格 `content` JSON，按素材出现顺序建立 Asset ID/URL 到 `图片N/视频N/音频N` 的映射。
-- 检查长图/九宫格参考、素材引用连读歧义和同镜头运镜冲突，并在 Markdown/JSON 输出中补充优化问题与相关原则。
-- 只依赖 Python 标准库。
+你不需要打开终端，也不需要记 CLI 参数。确认技能已安装后，直接在对话里发送需求即可。
 
-边界：CLI 不直接读取真实图片、视频、音频，也不联网调用多模态模型；真实素材理解由 ArkClaw/OpenClaw/Codex 等宿主多模态能力完成，CLI 只消费结构化摘要。
+### 入口 1：火山 ArkClaw 企业版
 
-## 最新增强
+1. 打开火山 ArkClaw 企业版。
+2. 进入或选择 Hermes Agent。
+3. 确认已加载 `seedance-prompt-optimizer` 技能。
+4. 上传素材，或直接发送你的 Seedance 视频需求。
+5. 复制返回的“优化后提示词”去 Seedance 使用。
 
-- `--media-analysis` 可接收宿主多模态模型产出的 JSON/Markdown 摘要，让 CLI 把素材理解结果稳定写入提示词。
-- `optimize --format markdown` 会额外输出 `优化问题` 和 `相关原则`；`--format json` 会返回 `issues` 与 `principles` 字段，便于上层系统展示或二次处理。
-- 粘贴 Seedance API 风格 `content` JSON 时，CLI 会按非文本素材出现顺序建立 `asset-*`/URL 到 `图片N`、`视频N`、`音频N` 的映射。
-- 官方规则已内置为诊断：长图/九宫格风险、素材引用连读歧义、同镜头多运镜冲突、编辑/延长任务误用 `参考视频N` 等。
+### 入口 2：Trae
 
-## ArkClaw/OpenClaw 安装
+1. 打开 Trae。
+2. 打开或导入本项目。
+3. 确认项目里存在 `skills/seedance-prompt-optimizer/SKILL.md`。
+4. 新建对话，发送下面的话术。
 
-OpenClaw/ArkClaw 会加载 `<workspace>/skills` 和 `~/.openclaw/skills` 中的技能，工作区技能优先。参考：
-
-- [OpenClaw Skills](https://openclaw.cc/tools/skills)
-- [openclaw skills 命令](https://openclaw.cc/cli/skills)
-- [ArkClaw 介绍](https://arkclaw.lol/)
-
-### 一键安装
-
-```bash
-bash <(curl -fsSL https://gitee.com/bolecodex/seedance-prompt-optimizer/raw/main/scripts/setup-gitee.sh)
-```
-
-该命令会安装技能到 `~/.openclaw/skills/seedance-prompt-optimizer`，并安装 CLI 到 `~/.local/bin/seedance-prompt-optimizer`。
-
-### 方式一：作为工作区仓库安装
-
-```bash
-git clone https://github.com/bolecodex/seedance-prompt-optimizer.git
-cd seedance-prompt-optimizer
-openclaw skills list
-openclaw skills info seedance-prompt-optimizer
-```
-
-在新会话中直接发送：
-
-```text
-请使用 seedance-prompt-optimizer 优化这段 Seedance 提示词：
-图片1是女主，图片2是江南雨巷场景，视频1是慢速推镜参考...
-```
-
-### 方式二：作为全局技能安装
-
-```bash
-git clone https://github.com/bolecodex/seedance-prompt-optimizer.git
-mkdir -p ~/.openclaw/skills
-cp -R seedance-prompt-optimizer/skills/seedance-prompt-optimizer ~/.openclaw/skills/
-openclaw skills list
-openclaw skills info seedance-prompt-optimizer
-```
-
-技能内 CLI 是自包含的；只复制 `skills/seedance-prompt-optimizer` 也能运行。
-
-## 给小白用户：直接这样用
-
-安装好技能后，不需要打开终端，也不需要记 CLI 参数。直接在 ArkClaw/OpenClaw 新会话里，把你的需求发给助手即可。
+### 一句话模板
 
 推荐开头写一句：
 
@@ -78,6 +32,8 @@ openclaw skills info seedance-prompt-optimizer
 ```
 
 然后粘贴你的原始想法、提示词，或上传图片/视频/音频素材。
+
+更完整的小白教程见：[USER_GUIDE.md](USER_GUIDE.md)。
 
 ## 直接复制的使用示例
 
@@ -247,9 +203,49 @@ asset-20260324135118-xxxx 是女主。
 镜头采用中景缓慢推镜。
 ```
 
+## 能力
+
+- 将松散提示词改写为三段论格式：`整体设定：`、`时间片分镜：`、`风格画质约束：`。
+- 检查缺少分镜、多模态素材未绑定、`参考视频N` 误用于编辑/延长、`--`、`s` 时长、空泛词、无效画质词、字幕/logo/水印、风格漂移、人物 ID 漂移、双胞胎问题和音色描述不足。
+- 支持 0-9 张图片、0-3 段视频、0-3 段音频的多参考生视频提示词检查与优化。
+- 支持读取 JSON/Markdown 素材理解摘要，将图片主体/场景/风格、视频首尾帧/运镜/动作、音频音色/情绪/节奏融入提示词。
+- 支持扫描 Seedance API 风格 `content` JSON，按素材出现顺序建立 Asset ID/URL 到 `图片N/视频N/音频N` 的映射。
+- 检查长图/九宫格参考、素材引用连读歧义和同镜头运镜冲突，并在 Markdown/JSON 输出中补充优化问题与相关原则。
+- 只依赖 Python 标准库。
+
+边界：CLI 不直接读取真实图片、视频、音频，也不联网调用多模态模型；真实素材理解由 ArkClaw/OpenClaw/Codex 等宿主多模态能力完成，CLI 只消费结构化摘要。
+
+## 最新增强
+
+- `--media-analysis` 可接收宿主多模态模型产出的 JSON/Markdown 摘要，让 CLI 把素材理解结果稳定写入提示词。
+- `optimize --format markdown` 会额外输出 `优化问题` 和 `相关原则`；`--format json` 会返回 `issues` 与 `principles` 字段，便于上层系统展示或二次处理。
+- 粘贴 Seedance API 风格 `content` JSON 时，CLI 会按非文本素材出现顺序建立 `asset-*`/URL 到 `图片N`、`视频N`、`音频N` 的映射。
+- 官方规则已内置为诊断：长图/九宫格风险、素材引用连读歧义、同镜头多运镜冲突、编辑/延长任务误用 `参考视频N` 等。
+
 ## 高级用法：CLI
 
-普通用户优先使用 ArkClaw/OpenClaw 技能。CLI 适合批量处理、自动化检查、接入脚本或调试技能。
+普通用户不用看这里，优先在火山 ArkClaw 企业版的 Hermes Agent 或 Trae 里直接使用技能。CLI 适合批量处理、自动化检查、接入脚本或调试技能。
+
+OpenClaw/ArkClaw 会加载 `<workspace>/skills` 和 `~/.openclaw/skills` 中的技能，工作区技能优先。参考：
+
+- [OpenClaw Skills](https://openclaw.cc/tools/skills)
+- [openclaw skills 命令](https://openclaw.cc/cli/skills)
+- [ArkClaw 介绍](https://arkclaw.lol/)
+
+一键安装：
+
+```bash
+bash <(curl -fsSL https://gitee.com/bolecodex/seedance-prompt-optimizer/raw/main/scripts/setup-gitee.sh)
+```
+
+作为工作区仓库安装：
+
+```bash
+git clone https://github.com/bolecodex/seedance-prompt-optimizer.git
+cd seedance-prompt-optimizer
+openclaw skills list
+openclaw skills info seedance-prompt-optimizer
+```
 
 仓库入口：
 
