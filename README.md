@@ -2,7 +2,7 @@
 
 面向 Seedance 2.0 的提示词优化 CLI 与 ArkClaw/OpenClaw Skill。用户把自己写的提示词发给 ArkClaw，ArkClaw 触发 `seedance-prompt-optimizer` 技能后，返回结构化、可执行的优化提示词和简短诊断。
 
-规则优先级：如文档之间存在冲突，以 `docs/Seedance 2.0提示词常见问题与处理指南.md` 为准。
+规则优先级：以技能内 `skills/seedance-prompt-optimizer/references/seedance-rules.md` 为准；该文件已汇总 Seedance 2.0 常见问题、官方提示词指南和本工具的自动化规则。
 
 ## 能力
 

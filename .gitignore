@@ -11,3 +11,4 @@ temp/
 *.log
 optimized*.txt
 prompt*.txt
+docs/

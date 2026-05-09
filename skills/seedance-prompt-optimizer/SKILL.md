@@ -5,7 +5,7 @@ description: 优化、改写、检查、诊断、模板化和结构化 Seedance 
 
 # Seedance 提示词优化器
 
-使用本技能将松散的 Seedance 2.0 视频提示词改写为结构清晰、可执行的提示词。最高优先级规则来自 `references/seedance-rules.md`；该文件基于仓库文档整理，规则冲突时以《Seedance 2.0提示词常见问题与处理指南》为准。
+使用本技能将松散的 Seedance 2.0 视频提示词改写为结构清晰、可执行的提示词。最高优先级规则来自 `references/seedance-rules.md`；该文件已汇总 Seedance 2.0 常见问题、官方提示词指南和本工具的自动化规则。
 
 ## 工作流程
 
