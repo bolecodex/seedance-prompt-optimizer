@@ -99,14 +99,83 @@ python skills/seedance-prompt-optimizer/scripts/seedance_prompt_optimizer.py tem
 --format text|markdown|json
 ```
 
-## 示例
+## 快速开始
+
+只想立刻优化一段提示词，可以直接把文本从标准输入传给 `optimize`：
+
+```bash
+printf '%s' '氛围感电影感，女孩在雨巷里走路，镜头好看点，不要背景音乐。' \
+  | python tools/seedance_prompt_optimizer.py optimize --duration 6 --ratio 9:16 --format markdown
+```
+
+如果已经有提示词文件：
+
+```bash
+python tools/seedance_prompt_optimizer.py optimize \
+  --input prompt.txt \
+  --output optimized.txt \
+  --duration 6 \
+  --ratio 9:16
+```
+
+只想检查问题，不改写：
+
+```bash
+python tools/seedance_prompt_optimizer.py lint --input prompt.txt --format markdown
+```
+
+生成一个可填写模板：
+
+```bash
+python tools/seedance_prompt_optimizer.py template --task reference --duration 6 --ratio 9:16
+```
+
+## 常见场景示例
+
+### 1. 纯文本提示词优化
+
+输入：
+
+```text
+氛围感电影感，一个女孩在江南雨巷里走路，镜头好看点，不要背景音乐。
+```
+
+命令：
+
+```bash
+printf '%s' '氛围感电影感，一个女孩在江南雨巷里走路，镜头好看点，不要背景音乐。' \
+  | python tools/seedance_prompt_optimizer.py optimize --duration 6 --ratio 9:16 --format markdown
+```
+
+适合：用户只有一个粗略想法，想先得到三段论结构化提示词。
+
+### 2. 图片 + 视频 + 音频多参考生成
+
+输入：
+
+```text
+图片1是女主，图片2是江南雨巷场景，视频1是慢速推镜参考，音频1是温柔女声音色参考。氛围感电影感，女主走在图片2的雨巷里，参考视频1的运镜，使用音频1说：今晚雨真大。
+```
+
+命令：
 
 ```bash
 printf '%s' '图片1是女主，图片2是江南雨巷场景，视频1是慢速推镜参考，音频1是温柔女声音色参考。氛围感电影感，女主走在图片2的雨巷里，参考视频1的运镜，使用音频1说：今晚雨真大。' \
-  | python tools/seedance_prompt_optimizer.py optimize --task reference --images 2 --videos 1 --audios 1 --duration 6 --ratio 9:16 --format markdown
+  | python tools/seedance_prompt_optimizer.py optimize \
+      --task reference \
+      --images 2 \
+      --videos 1 \
+      --audios 1 \
+      --duration 6 \
+      --ratio 9:16 \
+      --format markdown
 ```
 
-带素材理解摘要：
+适合：Seedance 全能参考、多参考生视频、角色图 + 场景图 + 运镜视频 + 音色参考。
+
+### 3. 带素材理解摘要的多模态优化
+
+先让宿主多模态模型或人工写一个 `media.json`：
 
 ```json
 {
@@ -122,6 +191,8 @@ printf '%s' '图片1是女主，图片2是江南雨巷场景，视频1是慢速�
 }
 ```
 
+再运行：
+
 ```bash
 python tools/seedance_prompt_optimizer.py optimize \
   --input prompt.txt \
@@ -130,7 +201,9 @@ python tools/seedance_prompt_optimizer.py optimize \
   --format markdown
 ```
 
-Markdown 摘要也支持：
+适合：已经上传了真实图片/视频/音频，希望把素材内容更准确地写进提示词。
+
+Markdown 摘要也支持，保存为 `media.md` 即可：
 
 ```markdown
 ## 图片1
@@ -147,7 +220,84 @@ Markdown 摘要也支持：
 运镜：中景平稳跟拍
 ```
 
-API `content` JSON 映射示例：
+```bash
+python tools/seedance_prompt_optimizer.py optimize \
+  --input prompt.txt \
+  --media-analysis media.md \
+  --format markdown
+```
+
+### 4. 严格编辑视频
+
+输入：
+
+```text
+视频1是待编辑视频。把视频1中女主的蓝色外套改成红色外套，其余人物、动作、背景和光线保持不变。
+```
+
+命令：
+
+```bash
+printf '%s' '视频1是待编辑视频。把视频1中女主的蓝色外套改成红色外套，其余人物、动作、背景和光线保持不变。' \
+  | python tools/seedance_prompt_optimizer.py optimize --task edit --videos 1 --format markdown
+```
+
+适合：局部替换、元素增删改、瑕疵修复。编辑任务里不要写 `参考视频1`，工具会提示并修正这类措辞风险。
+
+### 5. 视频向后延长
+
+输入：
+
+```text
+视频1是上一段成片。延长视频1，生成视频1之后自然发生的内容，女主继续沿雨巷向前走，保持角色、场景、光影和运镜连续。
+```
+
+命令：
+
+```bash
+printf '%s' '视频1是上一段成片。延长视频1，生成视频1之后自然发生的内容，女主继续沿雨巷向前走，保持角色、场景、光影和运镜连续。' \
+  | python tools/seedance_prompt_optimizer.py optimize --task extend --videos 1 --duration 6 --format markdown
+```
+
+适合：续写剧情、连续长镜头、文戏延长。
+
+### 6. 向前延长 / 前序生成
+
+输入：
+
+```text
+视频1是当前片段。生成视频1之前的内容，女主从巷口走入画面，最后自然衔接到视频1开头。
+```
+
+命令：
+
+```bash
+printf '%s' '视频1是当前片段。生成视频1之前的内容，女主从巷口走入画面，最后自然衔接到视频1开头。' \
+  | python tools/seedance_prompt_optimizer.py optimize --task extend --videos 1 --duration 6 --format markdown
+```
+
+如果 `media.json` 里有 `start_frame`，工具会把首帧作为衔接锚点写进分镜。
+
+### 7. 轨道补齐 / 补音频 / 补口型
+
+输入：
+
+```text
+给视频1补全音频轨道和口型，保持原视频主体、动作、场景、构图、光影和时长不变。
+```
+
+命令：
+
+```bash
+printf '%s' '给视频1补全音频轨道和口型，保持原视频主体、动作、场景、构图、光影和时长不变。' \
+  | python tools/seedance_prompt_optimizer.py optimize --videos 1 --format markdown
+```
+
+工具会自动把这类需求判定为 `edit`。
+
+### 8. Seedance API `content` JSON 自动映射
+
+如果你从接口日志里复制了完整 `content` JSON，可以直接传给 CLI：
 
 ```bash
 python tools/seedance_prompt_optimizer.py optimize --format json <<'JSON'
@@ -161,12 +311,26 @@ python tools/seedance_prompt_optimizer.py optimize --format json <<'JSON'
 JSON
 ```
 
-官方规则增强示例：
+工具会按非文本素材出现顺序映射：
+
+```text
+asset-img-001 -> 图片1
+asset-vid-001 -> 视频1
+```
+
+### 9. 官方规则诊断示例
 
 ```text
 断句防歧义：把 @图片1跑向@图片2 改为 @图片1（女主）跑向@图片2（男主）。
 单镜头单运镜：不要在同一镜头同时写“推镜、横移、环绕”。
 长图/九宫格：拆分成单图后分别写 @图片1、@图片2、@图片3 的职责。
+```
+
+可以用 `lint` 快速检查：
+
+```bash
+printf '%s' '镜头1：@图片1跑向@图片2，镜头缓慢推镜并横移同时环绕。' \
+  | python tools/seedance_prompt_optimizer.py lint --images 2 --format markdown
 ```
 
 ## 验证
