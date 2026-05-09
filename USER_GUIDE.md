@@ -39,6 +39,82 @@
 请使用 seedance-prompt-optimizer 优化：生成一段 6 秒 9:16 真人写实短剧视频。
 ```
 
+## 安装方式
+
+如果你的 ArkClaw 企业版、Hermes Agent 或 Trae 里已经能看到 `seedance-prompt-optimizer`，可以跳过这一节，直接看后面的使用方法。
+
+### 方式 1：火山 ArkClaw 企业版安装
+
+适合：团队统一在企业版 ArkClaw 里使用，由管理员或 Agent 负责人配置。
+
+1. 打开本项目 GitHub 仓库：`https://github.com/bolecodex/seedance-prompt-optimizer`。
+2. 下载或同步整个项目。
+3. 在 ArkClaw 企业版中打开或选择 Hermes Agent。
+4. 将项目里的技能目录加入 Hermes Agent 可用技能：
+
+```text
+skills/seedance-prompt-optimizer
+```
+
+5. 确认这个文件存在：
+
+```text
+skills/seedance-prompt-optimizer/SKILL.md
+```
+
+6. 新开一个 Hermes Agent 对话，发送：
+
+```text
+当前是否可以使用 seedance-prompt-optimizer 技能？
+```
+
+如果 Agent 回答可以使用，就安装完成了。
+
+企业版的具体入口可能会因租户配置不同而略有差异。如果你看不到“技能”“Skill”或“工具”相关入口，建议把本节发给企业管理员处理。
+
+### 方式 2：Trae 使用本项目
+
+适合：你在 Trae 里直接打开这个项目使用。
+
+1. 打开 Trae。
+2. 打开或导入本项目。
+3. 确认项目里存在：
+
+```text
+skills/seedance-prompt-optimizer/SKILL.md
+```
+
+4. 新建一个对话。
+5. 发送：
+
+```text
+请使用 seedance-prompt-optimizer 优化：
+我想生成一段 6 秒 9:16 真人写实视频，一个女孩在江南雨巷撑伞走路。
+```
+
+如果 Trae 能按这个技能返回“优化后提示词”，就可以正常使用。
+
+### 方式 3：下载项目后手动放置技能目录
+
+适合：你需要把技能复制到支持本地 Skill 的工具里。
+
+1. 从 GitHub 下载本项目。
+2. 找到这个目录：
+
+```text
+skills/seedance-prompt-optimizer
+```
+
+3. 把整个 `seedance-prompt-optimizer` 文件夹复制到你的工具指定的技能目录中。
+4. 重启或新建对话，让工具重新加载技能。
+5. 发送一句测试话术：
+
+```text
+请使用 seedance-prompt-optimizer 优化：一个女孩在雨巷撑伞走路，电影感。
+```
+
+注意：不要只复制 `SKILL.md` 一个文件，整个 `skills/seedance-prompt-optimizer` 文件夹都要保留，因为里面还有脚本和规则文件。
+
 ## 在火山 ArkClaw 企业版使用
 
 1. 打开火山 ArkClaw 企业版。
