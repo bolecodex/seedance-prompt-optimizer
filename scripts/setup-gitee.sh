@@ -19,6 +19,8 @@ require_cmd() {
 
 require_cmd git
 require_cmd python3
+require_cmd ffmpeg
+require_cmd ffprobe
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {

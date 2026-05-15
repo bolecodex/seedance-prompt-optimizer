@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -357,6 +358,172 @@ class SeedancePromptOptimizerTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("## 优化问题", result.stdout)
         self.assertIn("## 相关原则", result.stdout)
+
+    def test_analyze_media_image_uses_mock_ark_response(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            media = Path(tmp) / "role.jpg"
+            media.write_bytes(b"fake image")
+            mock = Path(tmp) / "mock_ark.py"
+            mock.write_text(
+                """
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        _ = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        body = {"choices": [{"message": {"content": json.dumps({
+            "role": "角色参考",
+            "summary": "黑衣古装男主",
+            "subjects": ["男主"],
+            "scene": "山石雾气",
+            "style": "真人写实仙侠",
+            "constraints": ["保持黑色衣袍"]
+        }, ensure_ascii=False)}}]}
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+server = HTTPServer(("127.0.0.1", 0), Handler)
+print(server.server_address[1], flush=True)
+server.serve_forever()
+""",
+                encoding="utf-8",
+            )
+            server = subprocess.Popen([sys.executable, str(mock)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                assert server.stdout is not None
+                port = server.stdout.readline().strip()
+                env = os.environ.copy()
+                env["ARK_API_KEY"] = "test-key"
+                env["ARK_BASE_URL"] = f"http://127.0.0.1:{port}"
+                result = subprocess.run(
+                    [sys.executable, str(REPO_CLI), "analyze-media", "--image", f"1={media}"],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=ROOT,
+                    env=env,
+                )
+            finally:
+                server.terminate()
+                server.wait(timeout=5)
+                if server.stdout:
+                    server.stdout.close()
+                if server.stderr:
+                    server.stderr.close()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["images"]["1"]["role"], "角色参考")
+        self.assertEqual(payload["images"]["1"]["subjects"], ["男主"])
+
+    def test_optimize_direct_media_merges_with_existing_analysis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "role.jpg"
+            image.write_bytes(b"fake image")
+            existing = Path(tmp) / "media.json"
+            existing.write_text(json.dumps({"images": {"1": {"role": "用户手写角色", "summary": "用户摘要"}}}, ensure_ascii=False), encoding="utf-8")
+            mock = Path(tmp) / "mock_ark.py"
+            mock.write_text(
+                """
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        _ = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        body = {"choices": [{"message": {"content": json.dumps({
+            "role": "角色参考",
+            "summary": "黑衣古装男主",
+            "subjects": ["男主"],
+            "style": "真人写实仙侠",
+            "constraints": ["保持黑色衣袍"]
+        }, ensure_ascii=False)}}]}
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+server = HTTPServer(("127.0.0.1", 0), Handler)
+print(server.server_address[1], flush=True)
+server.serve_forever()
+""",
+                encoding="utf-8",
+            )
+            server = subprocess.Popen([sys.executable, str(mock)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                assert server.stdout is not None
+                port = server.stdout.readline().strip()
+                env = os.environ.copy()
+                env["ARK_API_KEY"] = "test-key"
+                env["ARK_BASE_URL"] = f"http://127.0.0.1:{port}"
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(REPO_CLI),
+                        "optimize",
+                        "--media-analysis",
+                        str(existing),
+                        "--image",
+                        f"1={image}",
+                        "--format",
+                        "json",
+                    ],
+                    input="镜头1：男主走入山谷。真人写实风格，不要字幕，不要生成logo，不要生成水印。",
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=ROOT,
+                    env=env,
+                )
+            finally:
+                server.terminate()
+                server.wait(timeout=5)
+                if server.stdout:
+                    server.stdout.close()
+                if server.stderr:
+                    server.stderr.close()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        prompt = json.loads(result.stdout)["optimized_prompt"]
+        self.assertIn("@图片1是用户手写角色，用户摘要，男主，真人写实仙侠", prompt)
+        self.assertIn("保持黑色衣袍", prompt)
+
+    def test_direct_media_requires_ark_api_key(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as file:
+            env = os.environ.copy()
+            env.pop("ARK_API_KEY", None)
+            result = subprocess.run(
+                [sys.executable, str(REPO_CLI), "analyze-media", "--image", f"1={file.name}"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+                env=env,
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ARK_API_KEY", result.stderr)
+        self.assertNotIn("test-key", result.stderr)
+
+    def test_direct_media_requires_ffmpeg_tools(self) -> None:
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as file:
+            env = os.environ.copy()
+            env["ARK_API_KEY"] = "test-key"
+            env["PATH"] = ""
+            result = subprocess.run(
+                [sys.executable, str(REPO_CLI), "analyze-media", "--image", f"1={file.name}"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=ROOT,
+                env=env,
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ffmpeg", result.stderr)
 
 
 if __name__ == "__main__":

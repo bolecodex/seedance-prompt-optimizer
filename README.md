@@ -210,16 +210,18 @@ asset-20260324135118-xxxx 是女主。
 - 将松散提示词改写为三段论格式：`整体设定：`、`时间片分镜：`、`风格画质约束：`。
 - 检查缺少分镜、多模态素材未绑定、`参考视频N` 误用于编辑/延长、`--`、`s` 时长、空泛词、无效画质词、字幕/logo/水印、风格漂移、人物 ID 漂移、双胞胎问题和音色描述不足。
 - 支持 0-9 张图片、0-3 段视频、0-3 段音频的多参考生视频提示词检查与优化。
+- 支持直接读取图片、视频、音频文件，调用 Ark / 豆包多模态 API 生成素材理解摘要。
 - 支持读取 JSON/Markdown 素材理解摘要，将图片主体/场景/风格、视频首尾帧/运镜/动作、音频音色/情绪/节奏融入提示词。
 - 支持扫描 Seedance API 风格 `content` JSON，按素材出现顺序建立 Asset ID/URL 到 `图片N/视频N/音频N` 的映射。
 - 检查长图/九宫格参考、素材引用连读歧义和同镜头运镜冲突，并在 Markdown/JSON 输出中补充优化问题与相关原则。
 - 只依赖 Python 标准库。
 
-边界：CLI 不直接读取真实图片、视频、音频，也不联网调用多模态模型；真实素材理解由 ArkClaw/OpenClaw/Codex 等宿主多模态能力完成，CLI 只消费结构化摘要。
+边界：CLI 可在配置 `ARK_API_KEY` 后直接调用 Ark / 豆包多模态 API 分析真实图片、视频、音频；如果未配置密钥，也可继续使用 `--media-analysis` 消费宿主或人工生成的结构化摘要。
 
 ## 最新增强
 
 - `--media-analysis` 可接收宿主多模态模型产出的 JSON/Markdown 摘要，让 CLI 把素材理解结果稳定写入提示词。
+- `analyze-media` 与 `optimize --image/--video/--audio` 可直接分析媒体文件；默认 Ark 模型/终端节点为 `ep-20260506192525-qtw9h`。
 - `optimize --format markdown` 会额外输出 `优化问题` 和 `相关原则`；`--format json` 会返回 `issues` 与 `principles` 字段，便于上层系统展示或二次处理。
 - 粘贴 Seedance API 风格 `content` JSON 时，CLI 会按非文本素材出现顺序建立 `asset-*`/URL 到 `图片N`、`视频N`、`音频N` 的映射。
 - 官方规则已内置为诊断：长图/九宫格风险、素材引用连读歧义、同镜头多运镜冲突、编辑/延长任务误用 `参考视频N` 等。
@@ -276,7 +278,35 @@ python skills/seedance-prompt-optimizer/scripts/seedance_prompt_optimizer.py tem
 --audios 1
 --media-analysis media.json
 --media-analysis-format auto|json|markdown
+--image 1=role.jpg
+--video 2=ref.mp4
+--audio 1=voice.wav
+--analyze-media-output media.json
+--media-provider ark
+--ark-model ep-20260506192525-qtw9h
 --format text|markdown|json
+```
+
+开启直接多模态理解：
+
+```bash
+export ARK_API_KEY="你的 Ark API Key"
+python tools/seedance_prompt_optimizer.py analyze-media \
+  --image 1=role.jpg \
+  --video 2=ref.mp4 \
+  --audio 1=voice.wav \
+  --output media.json
+```
+
+直接分析素材并优化：
+
+```bash
+python tools/seedance_prompt_optimizer.py optimize \
+  --input prompt.txt \
+  --image 1=role.jpg \
+  --video 2=ref.mp4 \
+  --analyze-media-output media.json \
+  --format markdown
 ```
 
 CLI 示例：
@@ -314,5 +344,6 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
 ## 故障排查
 
 - ArkClaw 没有识别技能：重开新会话，确认技能位于 `<workspace>/skills/seedance-prompt-optimizer/SKILL.md` 或 `~/.openclaw/skills/seedance-prompt-optimizer/SKILL.md`。
+- 直接分析素材失败：确认已安装 `ffmpeg` 和 `ffprobe`，并已设置 `ARK_API_KEY` 环境变量。
 - 全局安装后 CLI 找不到仓库文件：请确认复制的是当前版本技能目录；技能内脚本应为完整 CLI，而不是转发脚本。
 - `lint` 返回非零退出码：表示存在 error 级诊断，例如缺少分镜或缺少多模态素材职责声明。

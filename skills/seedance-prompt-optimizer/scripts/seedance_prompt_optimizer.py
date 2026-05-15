@@ -7,9 +7,17 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
+import mimetypes
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
+import urllib.error
+import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -18,6 +26,10 @@ from typing import Iterable, Sequence
 TASKS = ("auto", "reference", "edit", "extend", "combo")
 OUTPUT_FORMATS = ("text", "markdown", "json")
 MEDIA_ANALYSIS_FORMATS = ("auto", "json", "markdown")
+MEDIA_PROVIDERS = ("ark",)
+DEFAULT_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+DEFAULT_ARK_MODEL = "ep-20260506192525-qtw9h"
+DIRECT_UPLOAD_LIMIT_BYTES = 18 * 1024 * 1024
 
 VAGUE_WORDS = ("氛围感", "电影感", "好看点", "高级感", "大片感", "质感拉满")
 VAGUE_REPLACEMENTS = {
@@ -137,6 +149,13 @@ class ContentAsset:
 class ContentAssetMapping:
     text: str
     assets: list[ContentAsset]
+
+
+@dataclass
+class MediaInput:
+    kind: str
+    media_id: int
+    path: Path
 
 
 @dataclass
@@ -316,6 +335,313 @@ def list_value(value: object) -> list[str]:
 
 def split_list_value(value: str) -> list[str]:
     return [part.strip() for part in re.split(r"[，,、/；;]\s*", value) if part.strip()]
+
+
+def media_analysis_to_json_dict(media_analysis: MediaAnalysis) -> dict[str, dict[str, dict[str, object]]]:
+    output: dict[str, dict[str, dict[str, object]]] = {"images": {}, "videos": {}, "audios": {}}
+    group_by_kind = {"image": "images", "video": "videos", "audio": "audios"}
+    for (kind, media_id), item in sorted(media_analysis.items.items(), key=lambda entry: (entry[0][0], entry[0][1])):
+        data = asdict(item)
+        data.pop("kind", None)
+        data.pop("media_id", None)
+        cleaned: dict[str, object] = {}
+        for key, value in data.items():
+            if isinstance(value, list):
+                if value:
+                    cleaned[key] = value
+            elif value:
+                cleaned[key] = value
+        output[group_by_kind[kind]][str(media_id)] = cleaned
+    return {key: value for key, value in output.items() if value}
+
+
+def merge_media_analysis(base: MediaAnalysis, generated: MediaAnalysis) -> MediaAnalysis:
+    merged = dict(base.items)
+    for key, generated_item in generated.items.items():
+        existing = merged.get(key)
+        if not existing:
+            merged[key] = generated_item
+            continue
+        merged[key] = merge_media_item(existing, generated_item)
+    return MediaAnalysis(merged)
+
+
+def merge_media_item(existing: MediaItem, generated: MediaItem) -> MediaItem:
+    data = asdict(existing)
+    generated_data = asdict(generated)
+    for key, value in generated_data.items():
+        if key in {"kind", "media_id"}:
+            continue
+        current = data.get(key)
+        if isinstance(current, list):
+            if not current and isinstance(value, list) and value:
+                data[key] = value
+        elif not current and value:
+            data[key] = value
+    return MediaItem(**data)
+
+
+def parse_media_inputs(values: Sequence[str] | None, kind: str) -> list[MediaInput]:
+    inputs: list[MediaInput] = []
+    for raw_value in values or []:
+        if "=" not in raw_value:
+            raise SystemExit(f"{MEDIA_LABELS[kind]}素材参数必须使用 N=PATH 格式：{raw_value}")
+        raw_id, raw_path = raw_value.split("=", 1)
+        try:
+            media_id = int(raw_id.strip())
+        except ValueError as exc:
+            raise SystemExit(f"{MEDIA_LABELS[kind]}素材编号必须是数字：{raw_id}") from exc
+        path = Path(raw_path).expanduser()
+        if not path.exists():
+            raise SystemExit(f"{MEDIA_LABELS[kind]}{media_id} 文件不存在：{path}")
+        if not path.is_file():
+            raise SystemExit(f"{MEDIA_LABELS[kind]}{media_id} 不是文件：{path}")
+        inputs.append(MediaInput(kind, media_id, path))
+    return inputs
+
+
+def collect_media_inputs(args: argparse.Namespace) -> list[MediaInput]:
+    inputs: list[MediaInput] = []
+    inputs.extend(parse_media_inputs(getattr(args, "image", None), "image"))
+    inputs.extend(parse_media_inputs(getattr(args, "video", None), "video"))
+    inputs.extend(parse_media_inputs(getattr(args, "audio", None), "audio"))
+    return inputs
+
+
+def require_ark_api_key() -> str:
+    api_key = os.environ.get("ARK_API_KEY", "").strip()
+    if not api_key:
+        raise SystemExit("缺少 ARK_API_KEY 环境变量。请先设置 ARK_API_KEY；不要把密钥写进代码、命令行参数或技能目录。")
+    return api_key
+
+
+def require_ffmpeg_tools() -> None:
+    missing = [name for name in ("ffmpeg", "ffprobe") if not shutil.which(name)]
+    if missing:
+        raise SystemExit("缺少必需工具：" + "、".join(missing) + "。请先安装 ffmpeg/ffprobe 后再分析视频或音频素材。")
+
+
+def data_url_for_file(path: Path, mime_type: str | None = None) -> str:
+    mime = mime_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return f"data:{mime};base64,{base64_for_file(path)}"
+
+
+def base64_for_file(path: Path) -> str:
+    return base64.b64encode(path.read_bytes()).decode("ascii")
+
+
+def file_size(path: Path) -> int:
+    return path.stat().st_size
+
+
+def media_prompt(kind: str, media_id: int) -> str:
+    if kind == "image":
+        return (
+            f"请分析图片{media_id}，输出 JSON。"
+            "字段：role, summary, subjects, scene, style, constraints。"
+            "重点描述可用于 Seedance 视频生成的角色、场景、风格和一致性约束。"
+        )
+    if kind == "video":
+        return (
+            f"请分析视频{media_id}，输出 JSON。"
+            "字段：role, summary, start_frame, end_frame, motion, actions, timing, audio。"
+            "重点描述首帧、尾帧、运镜、动作节奏、场景和音频/对白特征。"
+        )
+    return (
+        f"请分析音频{media_id}，输出 JSON。"
+        "字段：role, summary, voice, emotion, rhythm, constraints。"
+        "重点描述音色、情绪、语速节奏和生成台词时应保持的约束。"
+    )
+
+
+def ark_chat_completion(messages: list[dict[str, object]], args: argparse.Namespace) -> str:
+    api_key = require_ark_api_key()
+    base_url = os.environ.get("ARK_BASE_URL", "").strip() or DEFAULT_ARK_BASE_URL
+    model = getattr(args, "ark_model", None) or DEFAULT_ARK_MODEL
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.1,
+        "response_format": {"type": "json_object"},
+    }
+    request = urllib.request.Request(
+        base_url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise SystemExit(f"Ark 多模态分析请求失败：HTTP {exc.code} {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise SystemExit(f"Ark 多模态分析请求失败：{exc.reason}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Ark 响应不是合法 JSON：{exc}") from exc
+    try:
+        return str(response_payload["choices"][0]["message"]["content"])
+    except (KeyError, IndexError, TypeError) as exc:
+        raise SystemExit("Ark 响应缺少 choices[0].message.content。") from exc
+
+
+def parse_ark_media_item(kind: str, media_id: int, content: str) -> MediaItem:
+    raw_content = content.strip()
+    if raw_content.startswith("```"):
+        raw_content = re.sub(r"^```(?:json)?\s*", "", raw_content)
+        raw_content = re.sub(r"\s*```$", "", raw_content)
+    try:
+        payload = json.loads(raw_content)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Ark 素材分析结果 JSON 解析失败：{exc}") from exc
+    if isinstance(payload, dict):
+        for container_key in (MEDIA_LABELS[kind] + str(media_id), str(media_id), "result", "analysis"):
+            nested = payload.get(container_key)
+            if isinstance(nested, dict):
+                payload = nested
+                break
+    return media_item_from_mapping(kind, media_id, payload)
+
+
+def analyze_image_with_ark(media_input: MediaInput, args: argparse.Namespace) -> MediaItem:
+    content = [
+        {"type": "text", "text": media_prompt("image", media_input.media_id)},
+        {"type": "image_url", "image_url": {"url": data_url_for_file(media_input.path)}},
+    ]
+    return parse_ark_media_item("image", media_input.media_id, ark_chat_completion([{"role": "user", "content": content}], args))
+
+
+def analyze_audio_with_ark(media_input: MediaInput, args: argparse.Namespace) -> MediaItem:
+    direct_failed = False
+    if file_size(media_input.path) <= DIRECT_UPLOAD_LIMIT_BYTES:
+        content = [
+            {"type": "text", "text": media_prompt("audio", media_input.media_id)},
+            {"type": "input_audio", "input_audio": {"data": base64_for_file(media_input.path), "format": media_input.path.suffix.lstrip(".") or "wav"}},
+        ]
+        try:
+            return parse_ark_media_item("audio", media_input.media_id, ark_chat_completion([{"role": "user", "content": content}], args))
+        except SystemExit:
+            direct_failed = True
+    require_ffmpeg_tools()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        converted = Path(tmp_dir) / "audio.wav"
+        run_ffmpeg(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(media_input.path), "-t", "20", "-ac", "1", "-ar", "16000", str(converted)])
+        content = [
+            {"type": "text", "text": media_prompt("audio", media_input.media_id) + ("直传失败，以下为转换后的代表性音频片段。" if direct_failed else "")},
+            {"type": "input_audio", "input_audio": {"data": base64_for_file(converted), "format": "wav"}},
+        ]
+        return parse_ark_media_item("audio", media_input.media_id, ark_chat_completion([{"role": "user", "content": content}], args))
+
+
+def analyze_video_with_ark(media_input: MediaInput, args: argparse.Namespace) -> MediaItem:
+    direct_failed = False
+    if file_size(media_input.path) <= DIRECT_UPLOAD_LIMIT_BYTES:
+        content = [
+            {"type": "text", "text": media_prompt("video", media_input.media_id)},
+            {"type": "video_url", "video_url": {"url": data_url_for_file(media_input.path)}},
+        ]
+        try:
+            return parse_ark_media_item("video", media_input.media_id, ark_chat_completion([{"role": "user", "content": content}], args))
+        except SystemExit:
+            direct_failed = True
+    require_ffmpeg_tools()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        duration = ffprobe_duration(media_input.path)
+        timestamps = video_sample_timestamps(duration)
+        frame_paths = extract_video_frames(media_input.path, timestamps, tmp_path)
+        audio_path = extract_video_audio(media_input.path, tmp_path)
+        content: list[dict[str, object]] = [
+            {
+                "type": "text",
+                "text": media_prompt("video", media_input.media_id)
+                + ("直传失败或文件较大，以下为视频首帧、中间帧、尾帧和代表性音频片段。" if direct_failed else "以下为视频首帧、中间帧、尾帧和代表性音频片段。"),
+            }
+        ]
+        for index, frame_path in enumerate(frame_paths, start=1):
+            content.append({"type": "text", "text": f"视频{media_input.media_id}关键帧{index}"})
+            content.append({"type": "image_url", "image_url": {"url": data_url_for_file(frame_path, "image/jpeg")}})
+        if audio_path.exists() and audio_path.stat().st_size > 0:
+            content.append({"type": "text", "text": f"视频{media_input.media_id}代表性音频片段"})
+            content.append({"type": "input_audio", "input_audio": {"data": base64_for_file(audio_path), "format": "wav"}})
+        return parse_ark_media_item("video", media_input.media_id, ark_chat_completion([{"role": "user", "content": content}], args))
+
+
+def run_ffmpeg(command: list[str]) -> None:
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode != 0:
+        raise SystemExit(result.stderr.strip() or "ffmpeg 执行失败。")
+
+
+def ffprobe_duration(path: Path) -> float:
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(result.stderr.strip() or "ffprobe 执行失败。")
+    try:
+        return max(0.0, float(result.stdout.strip()))
+    except ValueError:
+        return 0.0
+
+
+def video_sample_timestamps(duration: float) -> list[float]:
+    if duration <= 0:
+        return [0.0, 1.0, 2.0]
+    return [min(0.5, duration / 4), duration / 2, max(0.0, duration - min(1.0, duration / 4))]
+
+
+def extract_video_frames(path: Path, timestamps: list[float], tmp_path: Path) -> list[Path]:
+    frames: list[Path] = []
+    for index, timestamp in enumerate(timestamps, start=1):
+        frame_path = tmp_path / f"frame_{index}.jpg"
+        run_ffmpeg(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{timestamp:.3f}", "-i", str(path), "-frames:v", "1", str(frame_path)])
+        if frame_path.exists():
+            frames.append(frame_path)
+    return frames
+
+
+def extract_video_audio(path: Path, tmp_path: Path) -> Path:
+    audio_path = tmp_path / "video_audio.wav"
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(path), "-t", "20", "-vn", "-ac", "1", "-ar", "16000", str(audio_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        return audio_path
+    return audio_path
+
+
+def analyze_media_inputs(args: argparse.Namespace) -> MediaAnalysis:
+    inputs = collect_media_inputs(args)
+    if not inputs:
+        return MediaAnalysis({})
+    require_ffmpeg_tools()
+    items: dict[tuple[str, int], MediaItem] = {}
+    for media_input in inputs:
+        if media_input.kind == "image":
+            item = analyze_image_with_ark(media_input, args)
+        elif media_input.kind == "video":
+            item = analyze_video_with_ark(media_input, args)
+        else:
+            item = analyze_audio_with_ark(media_input, args)
+        items[(item.kind, item.media_id)] = item
+    return MediaAnalysis(items)
+
+
+def save_media_analysis(path: str | None, media_analysis: MediaAnalysis) -> None:
+    if not path:
+        return
+    Path(path).write_text(json.dumps(media_analysis_to_json_dict(media_analysis), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def extract_content_asset_mapping(prompt: str) -> ContentAssetMapping | None:
@@ -1173,6 +1499,15 @@ def add_common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--format", choices=OUTPUT_FORMATS, default="text", help="输出格式。")
 
 
+def add_media_input_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--image", action="append", default=[], metavar="N=PATH", help="直接分析图片素材，可重复传入，例如 --image 1=role.jpg。")
+    parser.add_argument("--video", action="append", default=[], metavar="N=PATH", help="直接分析视频素材，可重复传入，例如 --video 2=ref.mp4。")
+    parser.add_argument("--audio", action="append", default=[], metavar="N=PATH", help="直接分析音频素材，可重复传入，例如 --audio 1=voice.wav。")
+    parser.add_argument("--media-provider", choices=MEDIA_PROVIDERS, default="ark", help="直接素材分析后端。")
+    parser.add_argument("--ark-model", default=DEFAULT_ARK_MODEL, help="Ark OpenAI-compatible model/endpoint id。")
+    parser.add_argument("--analyze-media-output", help="保存自动生成的素材理解摘要 JSON。")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="检查并优化 Seedance 2.0 提示词。", add_help=False)
     parser.add_argument("-h", "--help", action="help", help="显示此帮助信息并退出。")
@@ -1186,6 +1521,7 @@ def build_parser() -> argparse.ArgumentParser:
     lint._optionals.title = "可选参数"
     lint.add_argument("--input", "-i", help="输入提示词文件。省略或传 '-' 时从标准输入读取。")
     add_common_options(lint)
+    add_media_input_options(lint)
 
     optimize = subparsers.add_parser("optimize", help="将提示词改写为结构化 Seedance 格式。", add_help=False)
     optimize.add_argument("-h", "--help", action="help", help="显示此帮助信息并退出。")
@@ -1194,6 +1530,7 @@ def build_parser() -> argparse.ArgumentParser:
     optimize.add_argument("--input", "-i", help="输入提示词文件。省略或传 '-' 时从标准输入读取。")
     optimize.add_argument("--output", "-o", help="优化后提示词的输出文件。")
     add_common_options(optimize)
+    add_media_input_options(optimize)
 
     template = subparsers.add_parser("template", help="输出可填写的 Seedance 提示词模板。", add_help=False)
     template.add_argument("-h", "--help", action="help", help="显示此帮助信息并退出。")
@@ -1201,6 +1538,13 @@ def build_parser() -> argparse.ArgumentParser:
     template._optionals.title = "可选参数"
     template.add_argument("--output", "-o", help="模板输出文件。")
     add_common_options(template)
+
+    analyze_media = subparsers.add_parser("analyze-media", help="直接分析图片/视频/音频素材并输出素材理解摘要 JSON。", add_help=False)
+    analyze_media.add_argument("-h", "--help", action="help", help="显示此帮助信息并退出。")
+    analyze_media._positionals.title = "位置参数"
+    analyze_media._optionals.title = "可选参数"
+    analyze_media.add_argument("--output", "-o", help="素材理解摘要输出文件。")
+    add_media_input_options(analyze_media)
 
     return parser
 
@@ -1214,7 +1558,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         write_output(args.output, output)
         return 0
 
+    if args.command == "analyze-media":
+        generated_media_analysis = analyze_media_inputs(args)
+        output = json.dumps(media_analysis_to_json_dict(generated_media_analysis), ensure_ascii=False, indent=2)
+        write_output(args.output, output)
+        return 0
+
     media_analysis = read_media_analysis(args.media_analysis, args.media_analysis_format)
+    generated_media_analysis = analyze_media_inputs(args)
+    save_media_analysis(args.analyze_media_output, generated_media_analysis)
+    media_analysis = merge_media_analysis(media_analysis, generated_media_analysis)
     prompt = read_prompt(args.input)
     analysis = analyze_prompt(prompt, args, media_analysis)
 

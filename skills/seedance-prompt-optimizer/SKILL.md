@@ -12,7 +12,7 @@ description: 优化、改写、检查、诊断、模板化和结构化 Seedance 
 1. 如果用户只提出高层视频需求而没有具体提示词（例如“生成一个女孩跳舞的视频”），先进入引导模式，询问主体、动作、场景、光影色调、运镜、视觉风格、时长比例和约束条件；不要直接编造关键细节。
 2. 判断任务类型：`reference`、`edit`、`extend` 或 `combo`。轨道补齐/补音频/补口型归入 `edit`；向前延长/前序生成归入 `extend`。如果编辑或延长任务提到视频，避免写 `参考视频N`，改用 `严格编辑视频N`、`延长视频N` 或 `向前延长视频N`。
 3. 检查上传或提示词中提到的素材数量，要求使用编号绑定：`图片N`、`视频N`、`音频N`。Asset ID 不能替代这些编号引用；如果用户粘贴 Seedance API `content` JSON，可让 CLI 自动按出现顺序映射素材。
-4. 如用户上传了图片、视频或音频，先使用宿主多模态能力理解附件，生成结构化素材摘要；CLI 不直接读取真实媒体文件，也不联网调用模型。若发现长图、九宫格、拼图、多视图参考，提醒拆成单图后再绑定。
+4. 如用户上传了图片、视频或音频，优先让 CLI 直接分析真实媒体文件：使用 Ark / 豆包多模态 API 生成结构化素材摘要；需要环境变量 `ARK_API_KEY`，默认模型/终端节点为 `ep-20260506192525-qtw9h`。若宿主环境无法把附件路径传给 CLI，再使用宿主多模态能力作为兜底。若发现长图、九宫格、拼图、多视图参考，提醒拆成单图后再绑定。
 5. 多图或多人场景中，如人物、站位、首帧/尾帧、素材职责不明确，优先向用户确认；不要静默猜测。若信息已足够，则直接优化，不因可选信息缺失阻塞。
 6. 用户直接发来一段提示词时，先用本技能进行优化：默认返回三段论格式：`整体设定：`、`时间片分镜：`、`风格画质约束：`，再返回简短诊断、优化问题和相关原则。
 7. 如需要确定性检查、自动改写、JSON 输出或模板，运行随技能附带的 CLI；在 ArkClaw/OpenClaw 中使用 `{baseDir}` 定位当前技能目录：
@@ -21,6 +21,8 @@ description: 优化、改写、检查、诊断、模板化和结构化 Seedance 
 python {baseDir}/scripts/seedance_prompt_optimizer.py lint --input prompt.txt
 python {baseDir}/scripts/seedance_prompt_optimizer.py optimize --input prompt.txt --output optimized.txt
 python {baseDir}/scripts/seedance_prompt_optimizer.py optimize --input prompt.txt --media-analysis media.json
+python {baseDir}/scripts/seedance_prompt_optimizer.py analyze-media --image 1=role.jpg --video 2=ref.mp4 --audio 1=voice.wav
+python {baseDir}/scripts/seedance_prompt_optimizer.py optimize --input prompt.txt --image 1=role.jpg --video 2=ref.mp4 --analyze-media-output media.json
 python {baseDir}/scripts/seedance_prompt_optimizer.py template --task reference
 ```
 
@@ -29,6 +31,14 @@ python {baseDir}/scripts/seedance_prompt_optimizer.py template --task reference
 ## 素材理解摘要
 
 推荐让宿主多模态模型按 JSON 生成摘要，再传给 CLI 的 `--media-analysis`。Markdown 也可用，标题写成 `## 图片1`、`## 视频1`、`## 音频1`，字段使用 `职责：`、`摘要：`、`主体：`、`场景：`、`风格：`、`首帧：`、`尾帧：`、`运镜：`、`动作：`、`音色：`、`情绪：`、`节奏：`、`约束：`。
+
+CLI 也可以直接生成同样结构的摘要：
+
+```bash
+python {baseDir}/scripts/seedance_prompt_optimizer.py analyze-media --image 1=role.jpg --video 2=ref.mp4 --audio 1=voice.wav
+```
+
+安全要求：`ARK_API_KEY` 只从环境变量读取，不要写入提示词、命令行参数、文档、`.env` 以外的文件或技能目录；安装脚本不会复制 `.env`。
 
 ```json
 {

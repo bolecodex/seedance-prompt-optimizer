@@ -27,6 +27,8 @@ bash <(curl -fsSL https://gitee.com/bolecodex/seedance-prompt-optimizer/raw/main
 
 这行命令会自动下载并安装 `seedance-prompt-optimizer` 技能，不需要你手动下载项目，也不需要复制文件夹。
 
+如果你需要让技能和 CLI 直接理解图片、视频、音频，还需要确认电脑已安装 `ffmpeg`，并由管理员或技术同学设置 `ARK_API_KEY` 环境变量。密钥不要写进聊天、提示词、文档或技能目录。
+
 安装完成后，新开一个对话，发送下面这句话检查是否可用：
 
 ```text
